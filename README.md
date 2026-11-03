@@ -54,7 +54,13 @@ cd app
 ./scripts/routing-report.sh   my-server   # 远端分流报告
 ```
 
-### 4. 日志与连接历史
+### 4. 新服务器初始化（内置说明 + 依赖检查）
+
+「服务器初始化说明」标签页内置一段可复制的任务说明（目标、步骤、验收、约束、回滚，STC 风格），
+会自动带上当前服务器的探测 Host 与远端端口；点「复制给 agent」后可整段粘贴给任意 agent 去配置服务器。
+「检查服务器依赖」会 ssh 到该服务器检查 codex / mihomo / network.env / 模型接口 / OpenAI / GitHub / base_url / sshd keepalive。
+
+### 5. 日志与连接历史
 
 界面上的启动/停止/切换/检测等操作会写入 `log/history.log`；界面可「查看历史」「清空历史」。
 

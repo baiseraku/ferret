@@ -245,6 +245,80 @@ func appendHistory(_ action: String, _ s: SavedServer) {
     }
 }
 
+func serverSetupText(_ s: SavedServer) -> String {
+    let tpl = #"""
+    # 任务：把远程服务器配置成「模型与出网走本机隧道」的形态
+
+    背景：本机已有 SSH 反向隧道，服务器上请把 127.0.0.1:%MODELPORT% 当模型网关、127.0.0.1:%PROXYPORT% 当出网代理入口。
+    目标：服务器 codex 用网关取模型；ChatGPT/OpenAI 域名经本机代理；其余流量服务器直连。
+    SSH 别名：%PROBE%    （登录命令：ssh %PROBE%）
+
+    ## 步骤
+
+    1. 确认可登录
+       ssh %PROBE% 'echo ok'
+
+    2. 确认 codex CLI
+       ssh %PROBE% 'bash -lc "command -v codex && codex --version"'
+       没有就安装；保证登录 shell 的 PATH 能找得到。
+
+    3. 安装 mihomo（若未装）
+       - 下载 linux-amd64 单文件到 ~/.local/bin/mihomo，chmod +x
+       - 配置 ~/.config/mihomo/config.yaml：
+         mixed-port: 7890
+         proxies: [{ name: MAC, type: http, server: 127.0.0.1, port: %PROXYPORT% }]
+         proxy-groups: [{ name: PROXY, type: select, proxies: [MAC] }]
+         rules: openai.com、chatgpt.com、chatgpt.site、oaistatic.com、oaiusercontent.com、sora.com → PROXY；MATCH → DIRECT
+       - systemd --user 服务：ExecStart=%h/.local/bin/mihomo -d %h/.config/mihomo，Restart=always，enable --now
+
+    4. 写 ~/.codex/network.env（权限 600）并在 ~/.profile 里 source
+       HTTP_PROXY=HTTPS_PROXY=ALL_PROXY=http://127.0.0.1:7890
+       NO_PROXY=localhost,127.0.0.1,::1
+
+    5. 改 ~/.codex/config.toml（先备份）
+       model_provider = "magpie"
+       model_catalog_json = "/home/<用户名>/.codex/magpie-models.json"
+       [model_providers.magpie]
+       base_url = "http://127.0.0.1:%MODELPORT%/v1"
+       wire_api = "responses"
+       experimental_bearer_token = "magpie"
+       http_headers = { "x-openai-actor-authorization" = "magpie" }
+       requires_openai_auth = false
+       [mcp_servers.magpie]
+       url = "http://127.0.0.1:3425/mcp/magpie/hub"
+       删除其它逐条 [mcp_servers.*]。
+
+    6. 服务器 sshd 开启保活（需要 root）
+       ClientAliveInterval 15
+       ClientAliveCountMax 3
+       改后 systemctl reload ssh。
+
+    7. 可选：把本机 ~/.config/magpie/library/skills 同步到服务器 ~/.codex/skills。
+
+    ## 验收（全部满足才算完成）
+
+    - bash -lc 'curl -s -o /dev/null -w "%{http_code}" --noproxy "*" http://127.0.0.1:%MODELPORT%/v1/models'  → 200
+    - bash -lc 'curl -s -o /dev/null -w "%{http_code}" https://api.openai.com/v1/models'  → 401
+    - bash -lc 'curl -s -o /dev/null -w "%{http_code}" https://github.com'  → 200
+    - bash -lc 'echo $HTTPS_PROXY'  → http://127.0.0.1:7890
+    - systemctl --user is-active mihomo  → active
+
+    ## 约束
+
+    - 不改本机；不额外开监听端口；不把密钥写进配置或日志。
+    - 需要 sudo 密码时停下来告知用户，由用户输入。
+    - 改 config.toml / network.env 前先备份。
+
+    ## 回滚
+
+    恢复 config.toml 与 network.env 的备份；systemctl --user disable --now mihomo。
+    """#
+    return tpl
+        .replacingOccurrences(of: "%PROBE%", with: s.probeHost)
+        .replacingOccurrences(of: "%MODELPORT%", with: "\(s.remoteModelPort)")
+        .replacingOccurrences(of: "%PROXYPORT%", with: "\(s.remoteProxyPort)")
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 780),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -257,6 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let actionLabel = NSTextField(labelWithString: "")
     let logView = NSTextView()
     let reportView = NSTextView()
+    let setupView = NSTextView()
     var fields: [String: NSTextField] = [:]
     var busy = false
     var timer: Timer?
@@ -456,6 +531,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tab2.view = box2
         tabs.addTabViewItem(tab2)
 
+        // Tab 3：服务器初始化说明（整段复制给 agent）
+        let tab3 = NSTabViewItem(identifier: "setup"); tab3.label = "服务器初始化说明"
+        let (box3, inner3) = tabContainer()
+        let tip = NSTextField(labelWithString: "把下面整段复制给 agent 去配服务器；也可先点「检查服务器依赖」。")
+        tip.lineBreakMode = .byTruncatingTail
+        inner3.addArrangedSubview(tip)
+        let setupOps = NSStackView(); setupOps.orientation = .horizontal; setupOps.spacing = 8
+        setupOps.addArrangedSubview(btn("复制给 agent", #selector(onCopySetup)))
+        setupOps.addArrangedSubview(btn("检查服务器依赖", #selector(onCheckServerDeps)))
+        inner3.addArrangedSubview(setupOps)
+        setupView.isEditable = false; setupView.isSelectable = true
+        setupView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        setupView.autoresizingMask = [.width]
+        let setupScroll = NSScrollView()
+        setupScroll.documentView = setupView
+        setupScroll.hasVerticalScroller = true
+        setupScroll.borderType = .bezelBorder
+        setupScroll.translatesAutoresizingMaskIntoConstraints = false
+        inner3.addArrangedSubview(setupScroll)
+        let sw = setupScroll.widthAnchor.constraint(equalTo: inner3.widthAnchor, constant: -20); sw.priority = .defaultHigh; sw.isActive = true
+        let sh = setupScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240); sh.priority = .defaultHigh; sh.isActive = true
+        tab3.view = box3
+        tabs.addTabViewItem(tab3)
+
         fullWidth(tabs)
         let th = tabs.heightAnchor.constraint(greaterThanOrEqualToConstant: 360); th.priority = .defaultHigh; th.isActive = true
 
@@ -487,6 +586,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fields["remoteProxyPort"]?.stringValue = "\(s?.remoteProxyPort ?? 58922)"
         fields["localMagpiePort"]?.stringValue = "\(s?.localMagpiePort ?? 3425)"
         fields["localClashPort"]?.stringValue = "\(s?.localClashPort ?? 7897)"
+        setupView.string = s.map { serverSetupText($0) } ?? "（先添加一台服务器）"
         refreshLog()
     }
 
@@ -522,7 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func refreshLog() {
         let host = current?.sshHost ?? "my-tunnel"
-        let cmd = "tail -n 300 '\(ROOT)/log/tunnel-resident-\(host).log' 2>/dev/null | awk -v s='\(sessionSince)' 'substr($0,1,19) >= s'"
+        let cmd = "tail -n 400 '\(ROOT)/log/tunnel-resident-\(host).log' 2>/dev/null | awk -v s='\(sessionSince)' '{ ts=substr($0,1,19); if (ts ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/) { keep = (ts >= s) } if (keep) print }'"
         let (_, out) = shell(cmd, timeout: 6)
         logView.string = "（本次会话日志，\(sessionSince) 起；旧日志已隐藏）\n" + (out.isEmpty ? "（暂无新日志）" : out)
         logView.scrollToEndOfDocument(nil)
@@ -761,6 +861,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         saveConfig(config); reloadServerUI()
         touch(s, "保存配置")
         run("保存并重启", "cd \(ROOT) && ./scripts/resident.sh stop \(s.sshHost); ./scripts/resident.sh start \(s.sshHost)") { self.refreshStatus() }
+    }
+
+    @objc func onCopySetup() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(setupView.string, forType: .string)
+        actionLabel.stringValue = "服务器初始化说明已复制，可直接粘贴给 agent"
+        appendRawHistory("复制服务器初始化说明")
+    }
+
+    @objc func onCheckServerDeps() {
+        guard let s = current, !busy else { actionLabel.stringValue = "上一个操作还在进行，请稍候…"; return }
+        busy = true
+        actionLabel.stringValue = "检查服务器依赖…"
+        let remote = #"""
+        set -u
+        echo "codex: $(bash -lc 'command -v codex 2>/dev/null || echo MISSING')"
+        echo "mihomo: $(systemctl --user is-active mihomo 2>/dev/null || echo inactive)"
+        echo "network.env HTTPS_PROXY: $(bash -lc 'echo ${HTTPS_PROXY:-EMPTY}')"
+        echo "models: $(bash -lc 'curl -s -o /dev/null -m 6 -w "%{http_code}" --noproxy "*" http://127.0.0.1:%M%/v1/models' 2>/dev/null)"
+        echo "openai: $(bash -lc 'curl -s -o /dev/null -m 10 -w "%{http_code}" https://api.openai.com/v1/models' 2>/dev/null)"
+        echo "github: $(bash -lc 'curl -s -o /dev/null -m 8 -w "%{http_code}" https://github.com' 2>/dev/null)"
+        echo "base_url: $(grep -m1 'base_url' ~/.codex/config.toml 2>/dev/null || echo MISSING)"
+        echo "sshd keepalive: $(grep -E '^\s*ClientAliveInterval' /etc/ssh/sshd_config 2>/dev/null | head -1 || echo '未设置（需 root）')"
+        """#
+            .replacingOccurrences(of: "%M%", with: "\(s.remoteModelPort)")
+        let quoted = "'" + remote.replacingOccurrences(of: "'", with: "'\\''") + "'"
+        let cmd = "/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none \(s.probeHost) \(quoted)"
+        DispatchQueue.global().async {
+            let (_, out) = shell(cmd, timeout: 90)
+            DispatchQueue.main.async {
+                self.busy = false
+                self.setupView.string = serverSetupText(s) + "\n\n==== 服务器依赖检查 ====\n" + (out.isEmpty ? "（检查失败：确认探测 Host 可登录）" : out)
+                self.actionLabel.stringValue = "依赖检查完成"
+                appendRawHistory("检查服务器依赖")
+            }
+        }
     }
 
     @objc func onRefreshReport() {
