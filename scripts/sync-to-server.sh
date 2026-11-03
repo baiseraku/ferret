@@ -9,7 +9,7 @@ for _f in "$ROOT/scripts/local.env" "$HOME/.config/ferret/local.env"; do
   [ -f "$_f" ] && . "$_f" && break
 done
 ALIAS="${CODEX_PROBE_HOST:-my-server}"
-MODELS=0 MCP=0 SKILLS=0
+MODELS=0 MCP=0 SKILLS=0 RESTART_APP=0
 [ $# -eq 0 ] && set -- --all
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -18,6 +18,7 @@ while [ $# -gt 0 ]; do
     --skills) SKILLS=1 ;;
     --all) MODELS=1; MCP=1; SKILLS=1 ;;
     --host) ALIAS=${2:?}; shift ;;
+    --restart-app-server) RESTART_APP=1 ;;
     -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
@@ -35,8 +36,15 @@ need ssh; need scp; need tar
 
 sync_models() {
   echo "== 模型目录 =="
+  local before after
+  before=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'md5sum ~/.codex/magpie-models.json 2>/dev/null | cut -d" " -f1' 2>/dev/null || true)
   "$SCP" -q "${SSHOPT[@]}" "$HOME/.codex/magpie-models.json" "$ALIAS:.codex/magpie-models.json" || { rc=1; return; }
   say "已上传 $(python3 -c "import json,os;print(len(json.load(open(os.path.expanduser('~/.codex/magpie-models.json')))['models']))") 个模型"
+  after=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'md5sum ~/.codex/magpie-models.json 2>/dev/null | cut -d" " -f1' 2>/dev/null || true)
+  if [ -n "$before" ] && [ "$before" != "$after" ]; then
+    MODELS_CHANGED=1
+    say "清单已变化（旧 ${before:0:8} → 新 ${after:0:8}）"
+  fi
   # 确保服务器 config.toml 的 provider 指向 magpie + 本机清单，base_url 是 3425
   "$SSH" "${SSHOPT[@]}" "$ALIAS" 'python3 -' <<'PY' || rc=1
 import json, os, re, shutil, subprocess, sys
@@ -122,5 +130,17 @@ REMOTE
 [ "$MCP" = 1 ] && sync_mcp
 [ "$SKILLS" = 1 ] && sync_skills
 verify
-[ $rc -eq 0 ] && echo "完成" || echo "有步骤失败，见上" >&2
+[ $rc -eq 0 ] && if [ "${MODELS_CHANGED:-0}" = "1" ]; then
+  echo
+  echo "提示：服务器上常驻的 codex app-server 在启动时读取模型清单。"
+  echo "      已运行的远程工作区需要重连（或重启 app-server）才能看到新模型。"
+  if [ "$RESTART_APP" = "1" ]; then
+    echo "      正在重启服务器 app-server…"
+    "$SSH" "${SSHOPT[@]}" "$ALIAS" "pkill -f 'codex .*app-server' 2>/dev/null; sleep 1; echo '  已发送重启，桌面端重连后自动拉起新进程'" || rc=1
+  else
+    echo "      可加 --restart-app-server 让脚本自动重启它。"
+  fi
+fi
+
+echo "完成" || echo "有步骤失败，见上" >&2
 exit $rc
