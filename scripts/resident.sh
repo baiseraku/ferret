@@ -1,7 +1,7 @@
 #!/bin/bash
 # 管理常驻隧道（launchd user agent）。支持多台服务器，每台一个 launchd 任务。
 #   resident.sh install|start|stop|status|uninstall [sshHost]
-#   sshHost 默认 my-tunnel；对应的 launchd label 为 local.ferret.tunnel-<host>
+#   sshHost 默认 $CODEX_TUNNEL_HOST；对应的 launchd label 为 local.ferret.tunnel-<host>
 set -uo pipefail
 ROOT="${FERRET_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 MODE="${1:-status}"
@@ -11,6 +11,8 @@ LABEL="local.ferret.tunnel-$SLUG"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$ROOT/log/tunnel-resident-$HOST.log"
 UID_NUM="$(id -u)"
+
+[ -f "$ROOT/scripts/local.env" ] && . "$ROOT/scripts/local.env"
 
 say(){ printf '  %s\n' "$*"; }
 is_loaded() { /bin/launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; }
@@ -74,7 +76,7 @@ status() {
   if is_loaded; then say "launchd($HOST): 已加载（${LABEL}）"; else say "launchd($HOST): 未加载"; rc=1; fi
   local pid; pid=$(pid_of)
   [ -n "${pid:-}" ] && say "ssh 进程: $pid" || say "ssh 进程: 未找到"
-  local ports; ports=$(/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=8 -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none my-server 'ss -lnt 2>/dev/null | grep -cE "127.0.0.1:(3425|58922)\b"' 2>/dev/null)
+  local ports; ports=$(/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=8 -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none ${CODEX_PROBE_HOST:-my-server} 'ss -lnt 2>/dev/null | grep -cE "127.0.0.1:(3425|58922)\b"' 2>/dev/null)
   say "远端端口监听数: ${ports:-?} / 2"
   [ "${ports:-0}" = "2" ] || rc=1
   local code; code=$(probe)
@@ -86,7 +88,7 @@ status() {
 case "$MODE" in
   install)
     write_plist || exit 1
-    /usr/bin/ssh -O exit my-server >/dev/null 2>&1
+    /usr/bin/ssh -O exit ${CODEX_PROBE_HOST:-my-server} >/dev/null 2>&1
     sleep 1
     start || exit 1
     sleep 2

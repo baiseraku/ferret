@@ -12,6 +12,8 @@ LOG="$ROOT/log/heal.log"
 SSH=/usr/bin/ssh
 UID_NUM="$(id -u)"
 
+[ -f "$ROOT/scripts/local.env" ] && . "$ROOT/scripts/local.env"
+
 mkdir -p "$ROOT/log"
 say(){ printf '  %s\n' "$*"; }
 log(){ printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }

@@ -6,3 +6,4 @@ log/
 *.app
 !app/assets/AppIcon.icns
 .DS_Store
+scripts/local.env

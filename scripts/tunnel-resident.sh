@@ -1,12 +1,14 @@
 #!/bin/bash
 # 常驻反向隧道进程（launchd 拉起）：持有 RemoteForward，断线自动重连。
-# 目标 Host 由 CODEX_TUNNEL_HOST 指定（默认 my-tunnel）。
+# 目标 Host 由 CODEX_TUNNEL_HOST 指定（默认 $CODEX_TUNNEL_HOST）。
 set -uo pipefail
 ROOT="${FERRET_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 HOST="${CODEX_TUNNEL_HOST:-my-tunnel}"
 LOG="$ROOT/log/tunnel-resident-$HOST.log"
 mkdir -p "$ROOT/log"
 log(){ printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+
+[ -f "$ROOT/scripts/local.env" ] && . "$ROOT/scripts/local.env"
 
 log "启动常驻隧道（${HOST}）"
 while true; do
