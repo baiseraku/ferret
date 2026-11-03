@@ -688,22 +688,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         logView.scrollToEndOfDocument(nil)
     }
 
-    func refreshStatus() {
-        guard let s = current, !busy else { return }
-        busy = true
-        statusLabel.stringValue = "状态：检查中…（\(s.name)）"
-        let cmd = "cd \(ROOT) && ./scripts/resident.sh status \(s.sshHost)"
+    func probeStatus(_ s: SavedServer, completion: @escaping (Bool, String) -> Void) {
+        let cmd = "cd \(ROOT) && CODEX_PROBE_HOST='\(s.probeHost)' ./scripts/resident.sh status \(s.sshHost)"
         DispatchQueue.global().async {
-            let (rc, out) = shell(cmd, timeout: 60)
+            let (rc, out) = shell(cmd, timeout: 40)
             var model = "?"
             for line in out.components(separatedBy: "\n") where line.contains("/v1/models") {
                 if let v = line.split(separator: "=").last { model = v.trimmingCharacters(in: .whitespaces) }
             }
-            DispatchQueue.main.async {
-                let ok = rc == 0 && model == "200"
-                self.statusLabel.stringValue = "\(s.name)：\(ok ? "正常" : "异常")（模型 \(model)）"
-                self.detailLabel.stringValue = ok ? "常驻隧道在跑，远端转发与模型接口正常" : "点「修复连接」或查看日志"
-                self.busy = false
+            // 以模型接口是否 200 为准；rc 只用来区分“连不上/端口不全”，不当成异常结论
+            let ok = (model == "200")
+            DispatchQueue.main.async { completion(ok, model + (rc == 0 ? "" : " (rc=\(rc))")) }
+        }
+    }
+
+    func refreshStatus() {
+        guard let s = current else { return }
+        statusLabel.stringValue = "状态：检查中…（\(s.name)）"
+        probeStatus(s) { ok, detail in
+            if ok {
+                self.statusLabel.stringValue = "\(s.name)：正常（模型 200）"
+                self.detailLabel.stringValue = "常驻隧道在跑，远端转发与模型接口正常"
+            } else {
+                // 修复/重启后隧道可能刚在重连，稍等再探一次
+                self.statusLabel.stringValue = "\(s.name)：检查中…（首次探测 \(detail)，2 秒后重试）"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                    self.probeStatus(s) { ok2, detail2 in
+                        self.statusLabel.stringValue = "\(s.name)：\(ok2 ? "正常" : "异常")（模型 \(detail2)）"
+                        self.detailLabel.stringValue = ok2 ? "常驻隧道在跑，远端转发与模型接口正常" : "点「修复连接」，或看下方日志里的反馈"
+                    }
+                }
             }
         }
     }
@@ -788,7 +802,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         touch(s, "修复")
         run("修复连接（清理残留会话并重启隧道）",
             "cd \(ROOT) && ./scripts/heal.sh heal \(s.sshHost) \(s.probeHost)",
-            timeout: 220) { self.refreshStatus(); self.refreshLog() }
+            timeout: 220) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self.refreshStatus() }
+                self.refreshLog()
+            }
     }
     @objc func onRefresh() { refreshStatus(); refreshLog() }
     // MARK: 整合「Codex 代理启动」：确保 Clash/magpie，并以 --proxy-server 启动 ChatGPT
