@@ -74,3 +74,5 @@ cd app
 ## 许可
 
 自用脚本，按需修改。
+
+仓库：https://github.com/baiseraku/ferret
