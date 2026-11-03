@@ -351,18 +351,81 @@ enum Theme {
     static let border = adaptive(NSColor(srgbRed: 0.898, green: 0.898, blue: 0.906, alpha: 1),
                                  NSColor(srgbRed: 0.282, green: 0.282, blue: 0.290, alpha: 1))
     static let bad = NSColor(srgbRed: 0.878, green: 0.286, blue: 0.243, alpha: 1)
+    static let rowSelected = adaptive(NSColor(srgbRed: 0.918, green: 0.918, blue: 0.925, alpha: 1),
+                                      NSColor(srgbRed: 0.216, green: 0.216, blue: 0.227, alpha: 1))
 }
 
-final class CardView: NSView {
-    init(fill: NSColor = Theme.cardBG, radius: CGFloat = 10, bordered: Bool = true) {
-        super.init(frame: .zero)
+
+// MARK: - 自适应外观组件（切换深浅色时自动重设 CALayer 颜色）
+class AdaptiveView: NSView {
+    var fillColor: NSColor = .clear { didSet { applyColors() } }
+    var strokeColor: NSColor = .clear { didSet { applyColors() } }
+    var radius: CGFloat = 0 { didSet { layer?.cornerRadius = radius } }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = radius
-        layer?.backgroundColor = fill.cgColor
-        if bordered {
+        layer?.masksToBounds = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+
+    func applyColors() {
+        guard let layer = layer else { return }
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer.backgroundColor = self.fillColor.cgColor
+            layer.borderColor = self.strokeColor.cgColor
+            layer.borderWidth = self.strokeColor == .clear ? 0 : 1
+            layer.cornerRadius = self.radius
+        }
+    }
+}
+
+final class PillButton: NSButton {
+    var fill: NSColor = Theme.hover
+    var labelColor: NSColor = .labelColor
+    var fontForTitle: NSFont = .systemFont(ofSize: 12, weight: .medium)
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyStyle()
+    }
+    func applyStyle() {
+        wantsLayer = true
+        layer?.cornerRadius = 7
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = fill.cgColor
+            attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: fontForTitle,
+                .foregroundColor: labelColor,
+            ])
+        }
+    }
+}
+
+final class BorderedScrollView: NSScrollView {
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        effectiveAppearance.performAsCurrentDrawingAppearance {
             layer?.borderWidth = 1
             layer?.borderColor = Theme.border.cgColor
         }
+    }
+}
+
+final class CardView: AdaptiveView {
+    init(fill: NSColor = Theme.cardBG, radius: CGFloat = 10, bordered: Bool = true) {
+        super.init(frame: .zero)
+        self.fillColor = fill
+        self.radius = radius
+        self.strokeColor = bordered ? Theme.border : .clear
+        applyColors()
     }
     required init?(coder: NSCoder) { fatalError() }
 }
@@ -404,11 +467,29 @@ final class ServerRowView: NSView {
     }
     required init?(coder: NSCoder) { fatalError() }
 
+    private var selectedState = false
+    private var healthyState = false
+
     func configure(name: String, sub: String, selected: Bool, healthy: Bool) {
         nameLabel.stringValue = name
         subLabel.stringValue = sub
-        layer?.backgroundColor = (selected ? Theme.accentSoft : NSColor.clear).cgColor
-        dot.layer?.backgroundColor = (healthy ? Theme.accent : NSColor.tertiaryLabelColor).cgColor
+        selectedState = selected
+        healthyState = healthy
+        applyColors()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyColors()
+    }
+
+    private func applyColors() {
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = (selectedState ? Theme.rowSelected : NSColor.clear).cgColor
+            dot.layer?.backgroundColor = (healthyState ? Theme.accent : NSColor.tertiaryLabelColor).cgColor
+        }
     }
     override func mouseDown(with event: NSEvent) { onSelect?() }
 }
@@ -422,8 +503,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let serverListStack = NSStackView()
     let headerName = NSTextField(labelWithString: "")
     let headerSub = NSTextField(labelWithString: "")
-    let statusPill = NSView()
-    let statusDot = NSView()
+    let statusPill = AdaptiveView()
+    let statusDot = AdaptiveView()
     let statusLabel = NSTextField(labelWithString: "检查中…")
     let actionLabel = NSTextField(labelWithString: "")
     let logView = NSTextView()
@@ -518,16 +599,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func pill(_ title: String, _ sel: Selector, primary: Bool = false, height: CGFloat = 28) -> NSButton {
         let font = NSFont.systemFont(ofSize: 12, weight: .medium)
         let w = ceil((title as NSString).size(withAttributes: [.font: font]).width) + 24
-        let b = NSButton(title: title, target: self, action: sel)
+        let b = PillButton(title: title, target: self, action: sel)
         b.isBordered = false
-        b.wantsLayer = true
-        b.layer?.cornerRadius = 7
-        b.layer?.backgroundColor = (primary ? Theme.accent : Theme.hover).cgColor
-        b.attributedTitle = NSAttributedString(string: title, attributes: [
-            .font: font,
-            .foregroundColor: primary ? NSColor.white : NSColor.labelColor,
-        ])
         b.focusRingType = .none
+        b.fontForTitle = font
+        b.fill = primary ? Theme.accent : Theme.hover
+        b.labelColor = primary ? NSColor.white : NSColor.labelColor
+        b.applyStyle()
         b.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
             b.heightAnchor.constraint(equalToConstant: height),
@@ -547,10 +625,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         f.translatesAutoresizingMaskIntoConstraints = false
         fields[key] = f
 
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.cornerRadius = 6
-        box.layer?.backgroundColor = Theme.fieldBG.cgColor
+        let box = AdaptiveView()
+        box.fillColor = Theme.fieldBG
+        box.radius = 6
+        box.applyColors()
         box.translatesAutoresizingMaskIntoConstraints = false
         box.addSubview(f)
         NSLayoutConstraint.activate([
@@ -570,34 +648,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         tv.isSelectable = true
         tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         tv.textContainerInset = NSSize(width: 10, height: 10)
+        tv.textColor = .labelColor
+        tv.insertionPointColor = .labelColor
         tv.autoresizingMask = [.width]
         tv.drawsBackground = true
         tv.backgroundColor = Theme.windowBG
-        let sc = NSScrollView()
+        let sc = BorderedScrollView()
         sc.documentView = tv
         sc.hasVerticalScroller = true
         sc.borderType = .noBorder
         sc.drawsBackground = false
-        sc.wantsLayer = true
-        sc.layer?.cornerRadius = 8
-        sc.layer?.borderWidth = 1
-        sc.layer?.borderColor = Theme.border.cgColor
         sc.translatesAutoresizingMaskIntoConstraints = false
         return sc
     }
 
     func buildUI() {
-        let content = NSView()
-        content.wantsLayer = true
-        content.layer?.backgroundColor = Theme.windowBG.cgColor
+        let content = AdaptiveView()
+        content.fillColor = Theme.windowBG
+        content.applyColors()
         window.contentView = content
         window.contentMinSize = NSSize(width: 900, height: 600)
         window.setContentSize(NSSize(width: 1000, height: 700))
 
         // ---------- 左侧边栏 ----------
-        let sidebar = NSView()
-        sidebar.wantsLayer = true
-        sidebar.layer?.backgroundColor = Theme.sidebarBG.cgColor
+        let sidebar = AdaptiveView()
+        sidebar.fillColor = Theme.sidebarBG
+        sidebar.applyColors()
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(sidebar)
 
@@ -673,14 +749,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         main.addSubview(headerStack)
 
         // 状态胶囊
-        statusPill.wantsLayer = true
-        statusPill.layer?.cornerRadius = 12
-        statusPill.layer?.backgroundColor = Theme.hover.cgColor
+        (statusPill as? AdaptiveView)?.fillColor = Theme.hover
+        (statusPill as? AdaptiveView)?.radius = 12
+        (statusPill as? AdaptiveView)?.applyColors()
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         main.addSubview(statusPill)
-        statusDot.wantsLayer = true
-        statusDot.layer?.cornerRadius = 3.5
-        statusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
+        (statusDot as? AdaptiveView)?.fillColor = NSColor.tertiaryLabelColor
+        (statusDot as? AdaptiveView)?.radius = 3.5
+        (statusDot as? AdaptiveView)?.applyColors()
         statusDot.translatesAutoresizingMaskIntoConstraints = false
         statusPill.addSubview(statusDot)
         statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
@@ -1068,14 +1144,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func updateStatusPill(ok: Bool?, text: String) {
         statusLabel.stringValue = text
+        func paint(_ pill: NSColor, _ dot: NSColor) {
+            if let p = statusPill as? AdaptiveView { p.fillColor = pill; p.applyColors() }
+            if let d = statusDot as? AdaptiveView { d.fillColor = dot; d.applyColors() }
+        }
         if let ok = ok {
-            statusPill.layer?.backgroundColor = (ok ? Theme.accentSoft : Theme.hover).cgColor
-            statusDot.layer?.backgroundColor = (ok ? Theme.accent : Theme.bad).cgColor
+            paint(ok ? Theme.accentSoft : Theme.hover, ok ? Theme.accent : Theme.bad)
             statusLabel.textColor = ok ? Theme.accent : NSColor.secondaryLabelColor
             lastOK = ok
         } else {
-            statusPill.layer?.backgroundColor = Theme.hover.cgColor
-            statusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
+            paint(Theme.hover, NSColor.tertiaryLabelColor)
             statusLabel.textColor = NSColor.secondaryLabelColor
         }
     }
