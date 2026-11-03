@@ -789,6 +789,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pill("修复连接", #selector(onHeal)),
             pill("刷新状态", #selector(onRefresh)),
             pill("复制日志", #selector(onCopyLog)),
+            pill("同步 skill/模型", #selector(onSyncToServer)),
         ])
         actions.orientation = .horizontal
         actions.spacing = 8
@@ -812,6 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chatCard.addSubview(chatText)
         let chatBtn = pill("启动 ChatGPT", #selector(onLaunchChatGPT), primary: true, height: 30)
         chatCard.addSubview(chatBtn)
+
         NSLayoutConstraint.activate([
             chatCard.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 16),
             chatCard.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
@@ -1340,6 +1342,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    @objc func onSyncToServer() {
+        guard let s = current else { return }
+        touch(s, "同步 skill/模型")
+        run("同步 skill/模型",
+            "cd \(ROOT) && ./scripts/sync-to-server.sh --skills --models --host '\(s.probeHost)'",
+            timeout: 180) { self.refreshStatus() }
     }
 
     @objc func onCopyLog() {
