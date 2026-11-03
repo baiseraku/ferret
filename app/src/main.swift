@@ -536,20 +536,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return b
     }
 
-    func makeField(_ key: String) -> NSTextField {
+    func makeField(_ key: String) -> NSView {
         let f = NSTextField(string: "")
         f.font = .systemFont(ofSize: 12)
         f.isBezeled = false
-        f.drawsBackground = true
-        f.backgroundColor = Theme.fieldBG
-        f.wantsLayer = true
-        f.layer?.cornerRadius = 6
+        f.drawsBackground = false
         f.focusRingType = .none
+        f.cell?.usesSingleLineMode = true
+        f.cell?.wraps = false
         f.translatesAutoresizingMaskIntoConstraints = false
-        f.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        let fw = f.widthAnchor.constraint(equalToConstant: 190); fw.priority = .defaultHigh; fw.isActive = true
         fields[key] = f
-        return f
+
+        let box = NSView()
+        box.wantsLayer = true
+        box.layer?.cornerRadius = 6
+        box.layer?.backgroundColor = Theme.fieldBG.cgColor
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(f)
+        NSLayoutConstraint.activate([
+            box.heightAnchor.constraint(equalToConstant: 26),
+            f.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8),
+            f.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -8),
+            f.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+        ])
+        let bw = box.widthAnchor.constraint(equalToConstant: 190)
+        bw.priority = .defaultHigh
+        bw.isActive = true
+        return box
     }
 
     func makeTextView(_ tv: NSTextView) -> NSScrollView {
@@ -752,6 +765,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         var rowIndex = 0
         func addRow(_ label: String, _ key: String) {
             let row = NSStackView(); row.orientation = .horizontal; row.spacing = 10
+            row.alignment = .centerY
             let l = NSTextField(labelWithString: label)
             l.font = .systemFont(ofSize: 11)
             l.textColor = .secondaryLabelColor
@@ -760,6 +774,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             let f = makeField(key)
             row.addArrangedSubview(l)
             row.addArrangedSubview(f)
+            l.centerYAnchor.constraint(equalTo: f.centerYAnchor).isActive = true
             if rowIndex % 2 == 0 { colA.addArrangedSubview(row) } else { colB.addArrangedSubview(row) }
             rowIndex += 1
         }
@@ -778,6 +793,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mapStack.spacing = 8
         func mapRow(_ leftLabel: String, _ leftKey: String, _ rightLabel: String, _ rightKey: String) {
             let row = NSStackView(); row.orientation = .horizontal; row.spacing = 10
+            row.alignment = .centerY
             let ll = NSTextField(labelWithString: leftLabel)
             ll.font = .systemFont(ofSize: 11); ll.textColor = .secondaryLabelColor
             ll.translatesAutoresizingMaskIntoConstraints = false
@@ -794,6 +810,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             row.addArrangedSubview(ll); row.addArrangedSubview(lf)
             row.addArrangedSubview(arrow)
             row.addArrangedSubview(rl); row.addArrangedSubview(rf)
+            ll.centerYAnchor.constraint(equalTo: lf.centerYAnchor).isActive = true
+            rl.centerYAnchor.constraint(equalTo: rf.centerYAnchor).isActive = true
+            arrow.centerYAnchor.constraint(equalTo: lf.centerYAnchor).isActive = true
             mapStack.addArrangedSubview(row)
         }
         mapRow("远端模型端口", "remoteModelPort", "本机 magpie 端口", "localMagpiePort")
