@@ -296,7 +296,11 @@ func serverSetupText(_ s: SavedServer) -> String {
        ClientAliveCountMax 3
        改后 systemctl reload ssh。
 
-    7. 可选：把本机 ~/.config/magpie/library/skills 同步到服务器 ~/.codex/skills。
+    7. 先询问用户，再决定是否同步这两项（用户不确认就跳过，并在总结里说明未同步）
+       - skills：本机 ~/.config/magpie/library/skills → 服务器 ~/.codex/skills（保留服务器已有 .system）
+       - 模型列表：本机 ~/.codex/magpie-models.json → 服务器 ~/.codex/magpie-models.json
+         并确认 config.toml 的 model_catalog_json 指向该文件
+       同步后用 ls 数量核对；不同步不影响前 6 步的验收。
 
     ## 验收（全部满足才算完成）
 
