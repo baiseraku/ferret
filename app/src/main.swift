@@ -383,10 +383,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildUI()
         window.delegate = self
         window.title = "远程隧道"
+        window.isRestorable = false
         window.center()
-        // 防止恢复成屏幕外的位置导致“看不到窗口”
-        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(window.frame) }) {
-            window.setFrameOrigin(NSPoint(x: 120, y: 120))
+        // 防止恢复到屏幕外（多显示器/旧状态）：没有屏幕包含窗口时强制放回主屏
+        let visible = NSScreen.screens.first(where: { $0.visibleFrame.intersects(window.frame) && window.frame.origin.x >= $0.visibleFrame.minX })
+        if visible == nil, let main = NSScreen.main ?? NSScreen.screens.first {
+            let f = main.visibleFrame
+            let x = f.minX + max(20, (f.width - window.frame.width) / 2)
+            let y = f.maxY - window.frame.height - 60
+            window.setFrameOrigin(NSPoint(x: x, y: max(f.minY + 20, y)))
         }
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
