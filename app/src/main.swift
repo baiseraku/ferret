@@ -327,19 +327,112 @@ func serverSetupText(_ s: SavedServer) -> String {
         .replacingOccurrences(of: "%PROXYPORT%", with: "\(s.remoteProxyPort)")
 }
 
+
+// MARK: - 外观（参考 ChatGPT 桌面端）
+enum Theme {
+    static func adaptive(_ light: NSColor, _ dark: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+        }
+    }
+    static let accent = NSColor(srgbRed: 0.063, green: 0.639, blue: 0.498, alpha: 1)      // #10A37F
+    static let accentSoft = adaptive(NSColor(srgbRed: 0.902, green: 0.965, blue: 0.945, alpha: 1),
+                                     NSColor(srgbRed: 0.114, green: 0.282, blue: 0.239, alpha: 1))
+    static let windowBG = adaptive(NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 1),
+                                   NSColor(srgbRed: 0.106, green: 0.106, blue: 0.106, alpha: 1))
+    static let sidebarBG = adaptive(NSColor(srgbRed: 0.973, green: 0.973, blue: 0.976, alpha: 1),
+                                    NSColor(srgbRed: 0.145, green: 0.145, blue: 0.149, alpha: 1))
+    static let cardBG = adaptive(NSColor(srgbRed: 0.973, green: 0.976, blue: 0.980, alpha: 1),
+                                 NSColor(srgbRed: 0.176, green: 0.176, blue: 0.184, alpha: 1))
+    static let hover = adaptive(NSColor(srgbRed: 0.937, green: 0.941, blue: 0.945, alpha: 1),
+                                NSColor(srgbRed: 0.220, green: 0.220, blue: 0.227, alpha: 1))
+    static let fieldBG = adaptive(NSColor(srgbRed: 0.949, green: 0.949, blue: 0.957, alpha: 1),
+                                  NSColor(srgbRed: 0.243, green: 0.243, blue: 0.251, alpha: 1))
+    static let border = adaptive(NSColor(srgbRed: 0.898, green: 0.898, blue: 0.906, alpha: 1),
+                                 NSColor(srgbRed: 0.282, green: 0.282, blue: 0.290, alpha: 1))
+    static let bad = NSColor(srgbRed: 0.878, green: 0.286, blue: 0.243, alpha: 1)
+}
+
+final class CardView: NSView {
+    init(fill: NSColor = Theme.cardBG, radius: CGFloat = 10, bordered: Bool = true) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = radius
+        layer?.backgroundColor = fill.cgColor
+        if bordered {
+            layer?.borderWidth = 1
+            layer?.borderColor = Theme.border.cgColor
+        }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+final class ServerRowView: NSView {
+    private let nameLabel = NSTextField(labelWithString: "")
+    private let subLabel = NSTextField(labelWithString: "")
+    private let dot = NSView()
+    var onSelect: (() -> Void)?
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = 4
+        nameLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        nameLabel.lineBreakMode = .byTruncatingTail
+        subLabel.font = .systemFont(ofSize: 11, weight: .regular)
+        subLabel.textColor = .secondaryLabelColor
+        subLabel.lineBreakMode = .byTruncatingTail
+        for v in [dot, nameLabel, subLabel] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 46),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            nameLabel.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            nameLabel.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            subLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
+            subLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
+            subLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+        ])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    func configure(name: String, sub: String, selected: Bool, healthy: Bool) {
+        nameLabel.stringValue = name
+        subLabel.stringValue = sub
+        layer?.backgroundColor = (selected ? Theme.accentSoft : NSColor.clear).cgColor
+        dot.layer?.backgroundColor = (healthy ? Theme.accent : NSColor.tertiaryLabelColor).cgColor
+    }
+    override func mouseDown(with event: NSEvent) { onSelect?() }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 780),
+    let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
     var config = loadConfig()
 
-    let serverPopup = NSPopUpButton()
-    let statusLabel = NSTextField(labelWithString: "状态：检查中…")
-    let detailLabel = NSTextField(labelWithString: "")
+    let serverListStack = NSStackView()
+    let headerName = NSTextField(labelWithString: "")
+    let headerSub = NSTextField(labelWithString: "")
+    let statusPill = NSView()
+    let statusDot = NSView()
+    let statusLabel = NSTextField(labelWithString: "检查中…")
     let actionLabel = NSTextField(labelWithString: "")
     let logView = NSTextView()
     let reportView = NSTextView()
     let setupView = NSTextView()
+    let segmented = NSSegmentedControl(labels: ["隧道与日志", "远端分流监测", "服务器初始化说明"],
+                                       trackingMode: .selectOne, target: nil, action: nil)
+    var tabBoxes: [NSView] = []
+    var lastOK = false
     var fields: [String: NSTextField] = [:]
     var busy = false
     var timer: Timer?
@@ -385,43 +478,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         window.title = "Ferret"
         window.isRestorable = false
         window.center()
-        // 防止恢复到屏幕外（多显示器/旧状态）：没有屏幕包含窗口时强制放回主屏
-        let visible = NSScreen.screens.first(where: { $0.visibleFrame.intersects(window.frame) && window.frame.origin.x >= $0.visibleFrame.minX })
-        if visible == nil, let main = NSScreen.main ?? NSScreen.screens.first {
-            let f = main.visibleFrame
-            let x = f.minX + max(20, (f.width - window.frame.width) / 2)
-            let y = f.maxY - window.frame.height - 60
-            window.setFrameOrigin(NSPoint(x: x, y: max(f.minY + 20, y)))
-        }
+        fitOnScreen()
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         // 系统恢复窗口位置可能发生在启动之后，延迟再兜底一次
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            let w = self.window
-            let onScreen = NSScreen.screens.contains { screen in
-                screen.visibleFrame.intersects(w.frame) && w.frame.origin.x >= screen.visibleFrame.minX - 20
-            }
-            if !onScreen, let main = NSScreen.main ?? NSScreen.screens.first {
-                let f = main.visibleFrame
-                w.setFrameOrigin(NSPoint(x: f.minX + 80, y: f.maxY - w.frame.height - 60))
-            }
-        }
-        NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
-        logView.string = "（本次会话日志从这里开始）\n"
-        DispatchQueue.global().async {
-            let r = cleanupOldLogs()
-            DispatchQueue.main.async {
-                if r.removed > 0 || r.trimmed > 0 {
-                    self.actionLabel.stringValue = "日志保留最近 7 天：删除 \(r.removed) 个旧文件，裁剪 \(r.trimmed) 个文件"
-                }
-            }
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in self?.fitOnScreen() }
         reloadServerUI()
         refreshStatus()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             self?.refreshLog()
         }
     }
+    func fitOnScreen() {
+        let w = window
+        guard let screen = NSScreen.screens.first(where: { $0.visibleFrame.intersects(w.frame) }) ?? NSScreen.main else { return }
+        let vf = screen.visibleFrame
+        var f = w.frame
+        if f.maxX > vf.maxX - 20 { f.origin.x = vf.maxX - f.width - 20 }
+        if f.minX < vf.minX + 20 { f.origin.x = vf.minX + 20 }
+        if f.maxY > vf.maxY - 20 { f.origin.y = vf.maxY - f.height - 20 }
+        if f.minY < vf.minY + 20 { f.origin.y = vf.minY + 20 }
+        w.setFrame(f, display: true)
+    }
+
     // 关闭窗口只是隐藏，不退出程序（退出用 ⌘Q 或菜单）
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
 
@@ -435,207 +514,407 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // MARK: UI
-    func buildUI() {
-        let content = NSView(); window.contentView = content
-        window.contentMinSize = NSSize(width: 800, height: 640)
-
-        let stack = NSStackView()
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 12, right: 16)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(stack)
+    // MARK: 样式辅助
+    func pill(_ title: String, _ sel: Selector, primary: Bool = false, height: CGFloat = 28) -> NSButton {
+        let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        let w = ceil((title as NSString).size(withAttributes: [.font: font]).width) + 24
+        let b = NSButton(title: title, target: self, action: sel)
+        b.isBordered = false
+        b.wantsLayer = true
+        b.layer?.cornerRadius = 7
+        b.layer?.backgroundColor = (primary ? Theme.accent : Theme.hover).cgColor
+        b.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: font,
+            .foregroundColor: primary ? NSColor.white : NSColor.labelColor,
+        ])
+        b.focusRingType = .none
+        b.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: content.topAnchor),
-            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            b.heightAnchor.constraint(equalToConstant: height),
+            b.widthAnchor.constraint(equalToConstant: w),
+        ])
+        return b
+    }
+
+    func makeField(_ key: String) -> NSTextField {
+        let f = NSTextField(string: "")
+        f.font = .systemFont(ofSize: 12)
+        f.isBezeled = false
+        f.drawsBackground = true
+        f.backgroundColor = Theme.fieldBG
+        f.wantsLayer = true
+        f.layer?.cornerRadius = 6
+        f.focusRingType = .none
+        f.translatesAutoresizingMaskIntoConstraints = false
+        f.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        fields[key] = f
+        return f
+    }
+
+    func makeTextView(_ tv: NSTextView) -> NSScrollView {
+        tv.isEditable = false
+        tv.isSelectable = true
+        tv.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        tv.textContainerInset = NSSize(width: 10, height: 10)
+        tv.autoresizingMask = [.width]
+        tv.drawsBackground = true
+        tv.backgroundColor = Theme.windowBG
+        let sc = NSScrollView()
+        sc.documentView = tv
+        sc.hasVerticalScroller = true
+        sc.borderType = .noBorder
+        sc.drawsBackground = false
+        sc.wantsLayer = true
+        sc.layer?.cornerRadius = 8
+        sc.layer?.borderWidth = 1
+        sc.layer?.borderColor = Theme.border.cgColor
+        sc.translatesAutoresizingMaskIntoConstraints = false
+        return sc
+    }
+
+    func buildUI() {
+        let content = NSView()
+        content.wantsLayer = true
+        content.layer?.backgroundColor = Theme.windowBG.cgColor
+        window.contentView = content
+        window.contentMinSize = NSSize(width: 900, height: 600)
+        window.setContentSize(NSSize(width: 1000, height: 700))
+
+        // ---------- 左侧边栏 ----------
+        let sidebar = NSView()
+        sidebar.wantsLayer = true
+        sidebar.layer?.backgroundColor = Theme.sidebarBG.cgColor
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(sidebar)
+
+        let appTitle = NSTextField(labelWithString: "Ferret")
+        appTitle.font = .systemFont(ofSize: 17, weight: .semibold)
+        let appSub = NSTextField(labelWithString: "远程隧道")
+        appSub.font = .systemFont(ofSize: 11)
+        appSub.textColor = .secondaryLabelColor
+        let headStack = NSStackView(views: [appTitle, appSub])
+        headStack.orientation = .vertical
+        headStack.alignment = .leading
+        headStack.spacing = 1
+        headStack.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(headStack)
+
+        let sectionLabel = NSTextField(labelWithString: "服务器")
+        sectionLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        sectionLabel.textColor = .secondaryLabelColor
+        sectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(sectionLabel)
+
+        serverListStack.orientation = .vertical
+        serverListStack.alignment = .leading
+        serverListStack.spacing = 4
+        serverListStack.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(serverListStack)
+
+        let addServerBtn = pill("＋ 添加服务器", #selector(onAddServer), height: 30)
+        let delServerBtn = pill("删除当前服务器", #selector(onRemoveServer), height: 30)
+        let sideBtns = NSStackView(views: [addServerBtn, delServerBtn])
+        sideBtns.orientation = .vertical
+        sideBtns.alignment = .leading
+        sideBtns.spacing = 6
+        sideBtns.translatesAutoresizingMaskIntoConstraints = false
+        sidebar.addSubview(sideBtns)
+
+        // ---------- 右侧主区 ----------
+        let main = NSView()
+        main.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(main)
+
+        NSLayoutConstraint.activate([
+            sidebar.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: content.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 236),
+            main.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor),
+            main.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            main.topAnchor.constraint(equalTo: content.topAnchor),
+            main.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            headStack.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 18),
+            headStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 18),
+            sectionLabel.topAnchor.constraint(equalTo: headStack.bottomAnchor, constant: 20),
+            sectionLabel.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 18),
+            serverListStack.topAnchor.constraint(equalTo: sectionLabel.bottomAnchor, constant: 6),
+            serverListStack.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 10),
+            serverListStack.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -10),
+            sideBtns.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 14),
+            sideBtns.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -14),
         ])
 
-        // 占满内容宽度的辅助函数：先加入 stack，再约束宽度（顺序很重要）
-        func fullWidth(_ v: NSView) {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            stack.addArrangedSubview(v)
-            v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
-        }
-        func btn(_ t: String, _ sel: Selector) -> NSButton {
-            let b = NSButton(title: t, target: self, action: sel)
-            b.bezelStyle = .rounded
-            return b
-        }
+        // 顶部标题
+        headerName.font = .systemFont(ofSize: 20, weight: .semibold)
+        headerName.lineBreakMode = .byTruncatingTail
+        headerSub.font = .systemFont(ofSize: 11)
+        headerSub.textColor = .secondaryLabelColor
+        headerSub.lineBreakMode = .byTruncatingTail
+        let headerStack = NSStackView(views: [headerName, headerSub])
+        headerStack.orientation = .vertical
+        headerStack.alignment = .leading
+        headerStack.spacing = 2
+        headerStack.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(headerStack)
 
-        let title = NSTextField(labelWithString: "Ferret · 常驻反向转发（模型网关 + 出网代理）")
-        title.font = NSFont.boldSystemFont(ofSize: 15)
-        stack.addArrangedSubview(title)
+        // 状态胶囊
+        statusPill.wantsLayer = true
+        statusPill.layer?.cornerRadius = 12
+        statusPill.layer?.backgroundColor = Theme.hover.cgColor
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(statusPill)
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 3.5
+        statusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.addSubview(statusDot)
+        statusLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.addSubview(statusLabel)
+        NSLayoutConstraint.activate([
+            statusPill.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -24),
+            statusPill.centerYAnchor.constraint(equalTo: headerStack.centerYAnchor),
+            statusPill.heightAnchor.constraint(equalToConstant: 24),
+            statusDot.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 10),
+            statusDot.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: 7),
+            statusDot.heightAnchor.constraint(equalToConstant: 7),
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
+            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -10),
+            statusLabel.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+        ])
 
-        let serverRow = NSStackView(); serverRow.orientation = .horizontal; serverRow.spacing = 8
-        serverRow.addArrangedSubview(NSTextField(labelWithString: "服务器："))
-        serverPopup.target = self; serverPopup.action = #selector(onServerChanged)
-        serverPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        serverRow.addArrangedSubview(serverPopup)
-        serverRow.addArrangedSubview(btn("＋ 添加", #selector(onAddServer)))
-        serverRow.addArrangedSubview(btn("－ 删除", #selector(onRemoveServer)))
-        stack.addArrangedSubview(serverRow)
+        // 操作按钮
+        let actions = NSStackView(views: [
+            pill("启动", #selector(onStart), primary: true),
+            pill("停止", #selector(onStop)),
+            pill("重启", #selector(onRestart)),
+            pill("修复连接", #selector(onHeal)),
+            pill("刷新状态", #selector(onRefresh)),
+            pill("复制日志", #selector(onCopyLog)),
+        ])
+        actions.orientation = .horizontal
+        actions.spacing = 8
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(actions)
 
-        statusLabel.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
-        statusLabel.lineBreakMode = .byTruncatingTail
-        stack.addArrangedSubview(statusLabel)
-        detailLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.lineBreakMode = .byTruncatingTail
-        stack.addArrangedSubview(detailLabel)
+        // ChatGPT 代理卡片
+        let chatCard = CardView(fill: Theme.cardBG, radius: 10)
+        chatCard.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(chatCard)
+        let chatTitle = NSTextField(labelWithString: "ChatGPT 桌面端代理")
+        chatTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        let chatSub = NSTextField(labelWithString: "以 Clash 7897 为代理启动 ChatGPT；模型请求走本机 magpie 3425")
+        chatSub.font = .systemFont(ofSize: 11)
+        chatSub.textColor = .secondaryLabelColor
+        let chatText = NSStackView(views: [chatTitle, chatSub])
+        chatText.orientation = .vertical
+        chatText.alignment = .leading
+        chatText.spacing = 2
+        chatText.translatesAutoresizingMaskIntoConstraints = false
+        chatCard.addSubview(chatText)
+        let chatBtn = pill("启动 ChatGPT", #selector(onLaunchChatGPT), primary: true, height: 30)
+        chatCard.addSubview(chatBtn)
+        NSLayoutConstraint.activate([
+            chatCard.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 16),
+            chatCard.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            chatCard.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -24),
+            chatText.leadingAnchor.constraint(equalTo: chatCard.leadingAnchor, constant: 14),
+            chatText.centerYAnchor.constraint(equalTo: chatCard.centerYAnchor),
+            chatBtn.trailingAnchor.constraint(equalTo: chatCard.trailingAnchor, constant: -12),
+            chatBtn.centerYAnchor.constraint(equalTo: chatCard.centerYAnchor),
+            chatBtn.leadingAnchor.constraint(greaterThanOrEqualTo: chatText.trailingAnchor, constant: 12),
+            chatCard.heightAnchor.constraint(equalToConstant: 62),
+        ])
 
-        let ops = NSStackView(); ops.orientation = .horizontal; ops.spacing = 8
-        for (t, sel) in [("启动", #selector(onStart)), ("停止", #selector(onStop)), ("重启", #selector(onRestart)),
-                         ("修复连接", #selector(onHeal)), ("刷新状态", #selector(onRefresh)),
-                         ("打开日志", #selector(onOpenLogs)), ("复制日志", #selector(onCopyLog)),
-                         ("查看历史", #selector(onOpenHistory)), ("清空历史", #selector(onClearHistory))] {
-            ops.addArrangedSubview(btn(t, sel))
-        }
-        stack.addArrangedSubview(ops)
+        // 分段控件
+        segmented.target = self
+        segmented.action = #selector(onSegmentChanged)
+        segmented.segmentStyle = .rounded
+        segmented.selectedSegment = 0
+        segmented.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(segmented)
 
-        let codexRow = NSStackView(); codexRow.orientation = .horizontal; codexRow.spacing = 8
-        codexRow.addArrangedSubview(NSTextField(labelWithString: "本机 ChatGPT 代理启动："))
-        codexRow.addArrangedSubview(btn("启动 ChatGPT（走 Clash 代理）", #selector(onLaunchChatGPT)))
-        stack.addArrangedSubview(codexRow)
-
-        // 标签页
-        let tabs = NSTabView()
-        tabs.translatesAutoresizingMaskIntoConstraints = false
-
-        func tabContainer() -> (NSView, NSStackView) {
-            let box = NSView()
-            let inner = NSStackView()
-            inner.orientation = .vertical
-            inner.alignment = .leading
-            inner.spacing = 8
-            inner.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-            inner.translatesAutoresizingMaskIntoConstraints = false
-            box.addSubview(inner)
-            NSLayoutConstraint.activate([
-                inner.topAnchor.constraint(equalTo: box.topAnchor),
-                inner.leadingAnchor.constraint(equalTo: box.leadingAnchor),
-                inner.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-                inner.bottomAnchor.constraint(equalTo: box.bottomAnchor),
-            ])
-            return (box, inner)
-        }
+        // 内容容器
+        let host = CardView(fill: Theme.cardBG, radius: 10)
+        host.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(host)
 
         // Tab 1：配置 + 日志
-        let tab1 = NSTabViewItem(identifier: "tunnel"); tab1.label = "隧道与日志"
-        let (box1, inner1) = tabContainer()
-        // 配置行：两列布局（减少高度，避免与日志区争空间）
-        let cols = NSStackView(); cols.orientation = .horizontal; cols.spacing = 22; cols.alignment = .top
-        let colA = NSStackView(); colA.orientation = .vertical; colA.spacing = 6; colA.alignment = .leading
-        let colB = NSStackView(); colB.orientation = .vertical; colB.spacing = 6; colB.alignment = .leading
+        let box1 = NSView(); box1.translatesAutoresizingMaskIntoConstraints = false
+        let configCard = CardView(fill: Theme.windowBG, radius: 8)
+        configCard.translatesAutoresizingMaskIntoConstraints = false
+        box1.addSubview(configCard)
+        let colA = NSStackView(); colA.orientation = .vertical; colA.alignment = .leading; colA.spacing = 8
+        let colB = NSStackView(); colB.orientation = .vertical; colB.alignment = .leading; colB.spacing = 8
         var rowIndex = 0
         func addRow(_ label: String, _ key: String) {
-            let row = NSStackView(); row.orientation = .horizontal; row.spacing = 8
-            let l = NSTextField(labelWithString: label); l.alignment = .left
-            l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            let lw = l.widthAnchor.constraint(equalToConstant: 140); lw.priority = .defaultHigh; lw.isActive = true
-            let f = NSTextField(string: ""); f.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-            f.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            let fw = f.widthAnchor.constraint(equalToConstant: 190); fw.priority = .defaultHigh; fw.isActive = true
-            fields[key] = f
-            row.addArrangedSubview(l); row.addArrangedSubview(f)
+            let row = NSStackView(); row.orientation = .horizontal; row.spacing = 10
+            let l = NSTextField(labelWithString: label)
+            l.font = .systemFont(ofSize: 11)
+            l.textColor = .secondaryLabelColor
+            l.translatesAutoresizingMaskIntoConstraints = false
+            l.widthAnchor.constraint(equalToConstant: 112).isActive = true
+            let f = makeField(key)
+            row.addArrangedSubview(l)
+            row.addArrangedSubview(f)
             if rowIndex % 2 == 0 { colA.addArrangedSubview(row) } else { colB.addArrangedSubview(row) }
             rowIndex += 1
         }
-        for (label, key) in [("显示名", "name"), ("SSH 隧道 Host", "sshHost"), ("探测 Host（桌面端）", "probeHost"),
+        for (label, key) in [("显示名", "name"), ("SSH 隧道 Host", "sshHost"), ("探测 Host", "probeHost"),
                              ("SSH 主机名", "hostName"), ("SSH 端口", "port"), ("SSH 用户名", "userName"),
                              ("私钥路径", "identityFile"), ("远端模型端口", "remoteModelPort"),
                              ("远端代理端口", "remoteProxyPort"), ("本机 magpie 端口", "localMagpiePort"),
                              ("本机 Clash 端口", "localClashPort")] {
             addRow(label, key)
         }
-        cols.addArrangedSubview(colA); cols.addArrangedSubview(colB)
-        inner1.addArrangedSubview(cols)
-        let cfgOps = NSStackView(); cfgOps.orientation = .horizontal; cfgOps.spacing = 8
-        cfgOps.addArrangedSubview(btn("保存并重启", #selector(onSaveConfig)))
-        cfgOps.addArrangedSubview(btn("只写 ssh config", #selector(onWriteSSHOnly)))
-        inner1.addArrangedSubview(cfgOps)
+        let cfgOps = NSStackView(views: [
+            pill("保存并重启", #selector(onSaveConfig), primary: true, height: 26),
+            pill("只写 ssh config", #selector(onWriteSSHOnly), height: 26),
+        ])
+        cfgOps.orientation = .horizontal
+        cfgOps.spacing = 8
+        colsBox: do {
+            let cols = NSStackView(views: [colA, colB])
+            cols.orientation = .horizontal
+            cols.spacing = 24
+            cols.alignment = .top
+            cols.translatesAutoresizingMaskIntoConstraints = false
+            configCard.addSubview(cols)
+            cols.leadingAnchor.constraint(equalTo: configCard.leadingAnchor, constant: 14).isActive = true
+            cols.trailingAnchor.constraint(equalTo: configCard.trailingAnchor, constant: -14).isActive = true
+            cols.topAnchor.constraint(equalTo: configCard.topAnchor, constant: 14).isActive = true
+            colA.widthAnchor.constraint(equalTo: colB.widthAnchor).isActive = true
+            cfgOps.translatesAutoresizingMaskIntoConstraints = false
+            configCard.addSubview(cfgOps)
+            cfgOps.leadingAnchor.constraint(equalTo: configCard.leadingAnchor, constant: 14).isActive = true
+            cfgOps.topAnchor.constraint(equalTo: cols.bottomAnchor, constant: 12).isActive = true
+            cfgOps.bottomAnchor.constraint(equalTo: configCard.bottomAnchor, constant: -14).isActive = true
+        }
+        NSLayoutConstraint.activate([
+            configCard.topAnchor.constraint(equalTo: box1.topAnchor),
+            configCard.leadingAnchor.constraint(equalTo: box1.leadingAnchor),
+            configCard.trailingAnchor.constraint(equalTo: box1.trailingAnchor),
+        ])
+        let logScroll = makeTextView(logView)
+        box1.addSubview(logScroll)
+        NSLayoutConstraint.activate([
+            logScroll.topAnchor.constraint(equalTo: configCard.bottomAnchor, constant: 10),
+            logScroll.leadingAnchor.constraint(equalTo: box1.leadingAnchor),
+            logScroll.trailingAnchor.constraint(equalTo: box1.trailingAnchor),
+            logScroll.bottomAnchor.constraint(equalTo: box1.bottomAnchor),
+        ])
 
-        logView.isEditable = false; logView.isSelectable = true
-        logView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        logView.autoresizingMask = [.width]
-        let logScroll = NSScrollView()
-        logScroll.documentView = logView
-        logScroll.hasVerticalScroller = true
-        logScroll.borderType = .bezelBorder
-        logScroll.translatesAutoresizingMaskIntoConstraints = false
-        inner1.addArrangedSubview(logScroll)
-        let lw = logScroll.widthAnchor.constraint(equalTo: inner1.widthAnchor, constant: -20); lw.priority = .defaultHigh; lw.isActive = true
-        let lh = logScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 110); lh.priority = .defaultHigh; lh.isActive = true
-        tab1.view = box1
-        tabs.addTabViewItem(tab1)
+        // Tab 2：分流监测
+        let box2 = NSView(); box2.translatesAutoresizingMaskIntoConstraints = false
+        let repOps = NSStackView(views: [
+            pill("刷新分流报告", #selector(onRefreshReport), primary: true, height: 26),
+            pill("复制报告", #selector(onCopyReport), height: 26),
+        ])
+        repOps.orientation = .horizontal
+        repOps.spacing = 8
+        repOps.translatesAutoresizingMaskIntoConstraints = false
+        box2.addSubview(repOps)
+        let repScroll = makeTextView(reportView)
+        box2.addSubview(repScroll)
+        NSLayoutConstraint.activate([
+            repOps.topAnchor.constraint(equalTo: box2.topAnchor),
+            repOps.leadingAnchor.constraint(equalTo: box2.leadingAnchor),
+            repScroll.topAnchor.constraint(equalTo: repOps.bottomAnchor, constant: 10),
+            repScroll.leadingAnchor.constraint(equalTo: box2.leadingAnchor),
+            repScroll.trailingAnchor.constraint(equalTo: box2.trailingAnchor),
+            repScroll.bottomAnchor.constraint(equalTo: box2.bottomAnchor),
+        ])
 
-        // Tab 2：远端分流监测
-        let tab2 = NSTabViewItem(identifier: "routing"); tab2.label = "远端分流监测"
-        let (box2, inner2) = tabContainer()
-        let repOps = NSStackView(); repOps.orientation = .horizontal; repOps.spacing = 8
-        repOps.addArrangedSubview(btn("刷新分流报告", #selector(onRefreshReport)))
-        repOps.addArrangedSubview(btn("复制报告", #selector(onCopyReport)))
-        inner2.addArrangedSubview(repOps)
-        reportView.isEditable = false; reportView.isSelectable = true
-        reportView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        reportView.autoresizingMask = [.width]
-        let repScroll = NSScrollView()
-        repScroll.documentView = reportView
-        repScroll.hasVerticalScroller = true
-        repScroll.borderType = .bezelBorder
-        repScroll.translatesAutoresizingMaskIntoConstraints = false
-        inner2.addArrangedSubview(repScroll)
-        let rw = repScroll.widthAnchor.constraint(equalTo: inner2.widthAnchor, constant: -20); rw.priority = .defaultHigh; rw.isActive = true
-        let rh = repScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200); rh.priority = .defaultHigh; rh.isActive = true
-        tab2.view = box2
-        tabs.addTabViewItem(tab2)
+        // Tab 3：初始化说明
+        let box3 = NSView(); box3.translatesAutoresizingMaskIntoConstraints = false
+        let tip = NSTextField(labelWithString: "把下面整段复制给 agent 去配服务器；也可先检查服务器依赖。")
+        tip.font = .systemFont(ofSize: 11)
+        tip.textColor = .secondaryLabelColor
+        tip.translatesAutoresizingMaskIntoConstraints = false
+        box3.addSubview(tip)
+        let setupOps = NSStackView(views: [
+            pill("复制给 agent", #selector(onCopySetup), primary: true, height: 26),
+            pill("检查服务器依赖", #selector(onCheckServerDeps), height: 26),
+        ])
+        setupOps.orientation = .horizontal
+        setupOps.spacing = 8
+        setupOps.translatesAutoresizingMaskIntoConstraints = false
+        box3.addSubview(setupOps)
+        let setupScroll = makeTextView(setupView)
+        box3.addSubview(setupScroll)
+        NSLayoutConstraint.activate([
+            tip.topAnchor.constraint(equalTo: box3.topAnchor),
+            tip.leadingAnchor.constraint(equalTo: box3.leadingAnchor),
+            setupOps.topAnchor.constraint(equalTo: tip.bottomAnchor, constant: 8),
+            setupOps.leadingAnchor.constraint(equalTo: box3.leadingAnchor),
+            setupScroll.topAnchor.constraint(equalTo: setupOps.bottomAnchor, constant: 10),
+            setupScroll.leadingAnchor.constraint(equalTo: box3.leadingAnchor),
+            setupScroll.trailingAnchor.constraint(equalTo: box3.trailingAnchor),
+            setupScroll.bottomAnchor.constraint(equalTo: box3.bottomAnchor),
+        ])
 
-        // Tab 3：服务器初始化说明（整段复制给 agent）
-        let tab3 = NSTabViewItem(identifier: "setup"); tab3.label = "服务器初始化说明"
-        let (box3, inner3) = tabContainer()
-        let tip = NSTextField(labelWithString: "把下面整段复制给 agent 去配服务器；也可先点「检查服务器依赖」。")
-        tip.lineBreakMode = .byTruncatingTail
-        inner3.addArrangedSubview(tip)
-        let setupOps = NSStackView(); setupOps.orientation = .horizontal; setupOps.spacing = 8
-        setupOps.addArrangedSubview(btn("复制给 agent", #selector(onCopySetup)))
-        setupOps.addArrangedSubview(btn("检查服务器依赖", #selector(onCheckServerDeps)))
-        inner3.addArrangedSubview(setupOps)
-        setupView.isEditable = false; setupView.isSelectable = true
-        setupView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        setupView.autoresizingMask = [.width]
-        let setupScroll = NSScrollView()
-        setupScroll.documentView = setupView
-        setupScroll.hasVerticalScroller = true
-        setupScroll.borderType = .bezelBorder
-        setupScroll.translatesAutoresizingMaskIntoConstraints = false
-        inner3.addArrangedSubview(setupScroll)
-        let sw = setupScroll.widthAnchor.constraint(equalTo: inner3.widthAnchor, constant: -20); sw.priority = .defaultHigh; sw.isActive = true
-        let sh = setupScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240); sh.priority = .defaultHigh; sh.isActive = true
-        tab3.view = box3
-        tabs.addTabViewItem(tab3)
+        tabBoxes = [box1, box2, box3]
+        for b in tabBoxes {
+            b.translatesAutoresizingMaskIntoConstraints = false
+            host.addSubview(b)
+            NSLayoutConstraint.activate([
+                b.topAnchor.constraint(equalTo: host.topAnchor, constant: 12),
+                b.leadingAnchor.constraint(equalTo: host.leadingAnchor, constant: 12),
+                b.trailingAnchor.constraint(equalTo: host.trailingAnchor, constant: -12),
+                b.bottomAnchor.constraint(equalTo: host.bottomAnchor, constant: -12),
+            ])
+            b.isHidden = true
+        }
+        box1.isHidden = false
 
-        fullWidth(tabs)
-        let th = tabs.heightAnchor.constraint(greaterThanOrEqualToConstant: 360); th.priority = .defaultHigh; th.isActive = true
-
-        actionLabel.font = NSFont.systemFont(ofSize: 11)
+        actionLabel.font = .systemFont(ofSize: 11)
         actionLabel.textColor = .secondaryLabelColor
         actionLabel.lineBreakMode = .byTruncatingTail
-        stack.addArrangedSubview(actionLabel)
+        actionLabel.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(actionLabel)
+
+        NSLayoutConstraint.activate([
+            headerStack.topAnchor.constraint(equalTo: main.topAnchor, constant: 22),
+            headerStack.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            headerStack.trailingAnchor.constraint(lessThanOrEqualTo: statusPill.leadingAnchor, constant: -12),
+            actions.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 16),
+            actions.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            segmented.topAnchor.constraint(equalTo: chatCard.bottomAnchor, constant: 16),
+            segmented.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            host.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 10),
+            host.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            host.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -24),
+            host.bottomAnchor.constraint(equalTo: actionLabel.topAnchor, constant: -10),
+            actionLabel.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            actionLabel.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -24),
+            actionLabel.bottomAnchor.constraint(equalTo: main.bottomAnchor, constant: -14),
+        ])
+    }
+
+    @objc func onSegmentChanged() {
+        let idx = max(0, min(segmented.selectedSegment, tabBoxes.count - 1))
+        for (i, b) in tabBoxes.enumerated() { b.isHidden = (i != idx) }
     }
 
     func reloadServerUI() {
-        serverPopup.removeAllItems()
-        for (i, s) in config.servers.enumerated() {
-            let mark = s.lastUsed > 0 ? "  · \(Self.dateString(s.lastUsed))" : ""
-            serverPopup.addItem(withTitle: "\(s.name) — \(s.sshHost)\(mark)")
-            serverPopup.item(at: i)?.tag = i
+        // 左侧服务器列表
+        for v in serverListStack.arrangedSubviews { v.removeFromSuperview() }
+        for (i, srv) in config.servers.enumerated() {
+            let row = ServerRowView()
+            row.configure(name: srv.name, sub: srv.sshHost,
+                          selected: i == config.selected,
+                          healthy: i == config.selected && lastOK)
+            row.onSelect = { [weak self] in self?.selectServer(i) }
+            serverListStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: serverListStack.widthAnchor).isActive = true
         }
-        if !config.servers.isEmpty {
-            serverPopup.selectItem(at: min(max(config.selected, 0), config.servers.count - 1))
-        }
+
         let s = current
+        headerName.stringValue = s?.name ?? "未选择服务器"
+        headerSub.stringValue = s.map { "\($0.sshHost)  ·  \($0.hostName.isEmpty ? "未填主机名" : $0.hostName)" } ?? ""
+
         fields["name"]?.stringValue = s?.name ?? ""
         fields["sshHost"]?.stringValue = s?.sshHost ?? ""
         fields["probeHost"]?.stringValue = s?.probeHost ?? ""
@@ -651,6 +930,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         refreshLog()
     }
 
+    func selectServer(_ index: Int) {
+        guard index >= 0, index < config.servers.count else { return }
+        config.selected = index
+        saveConfig(config)
+        lastOK = false
+        reloadServerUI()
+        refreshStatus()
+    }
+
     static func dateString(_ t: Double) -> String {
         let f = DateFormatter(); f.dateFormat = "MM-dd HH:mm"
         return f.string(from: Date(timeIntervalSince1970: t))
@@ -663,7 +951,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         appendHistory(action, s)
         reloadServerUI()
-        serverPopup.selectItem(at: config.selected)
     }
 
     func run(_ desc: String, _ cmd: String, timeout: TimeInterval = 120, done: (() -> Void)? = nil) {
@@ -720,20 +1007,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
+    func updateStatusPill(ok: Bool?, text: String) {
+        statusLabel.stringValue = text
+        if let ok = ok {
+            statusPill.layer?.backgroundColor = (ok ? Theme.accentSoft : Theme.hover).cgColor
+            statusDot.layer?.backgroundColor = (ok ? Theme.accent : Theme.bad).cgColor
+            statusLabel.textColor = ok ? Theme.accent : NSColor.secondaryLabelColor
+            lastOK = ok
+        } else {
+            statusPill.layer?.backgroundColor = Theme.hover.cgColor
+            statusDot.layer?.backgroundColor = NSColor.tertiaryLabelColor.cgColor
+            statusLabel.textColor = NSColor.secondaryLabelColor
+        }
+    }
+
     func refreshStatus() {
         guard let s = current else { return }
-        statusLabel.stringValue = "状态：检查中…（\(s.name)）"
+        updateStatusPill(ok: nil, text: "检查中…")
         probeStatus(s) { ok, detail in
             if ok {
-                self.statusLabel.stringValue = "\(s.name)：正常（模型 200）"
-                self.detailLabel.stringValue = "常驻隧道在跑，远端转发与模型接口正常"
+                self.updateStatusPill(ok: true, text: "正常 · 模型 200")
+                self.reloadServerUI()
             } else {
-                // 修复/重启后隧道可能刚在重连，稍等再探一次
-                self.statusLabel.stringValue = "\(s.name)：检查中…（首次探测 \(detail)，2 秒后重试）"
+                self.updateStatusPill(ok: nil, text: "首次探测 \(detail)，重试中…")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     self.probeStatus(s) { ok2, detail2 in
-                        self.statusLabel.stringValue = "\(s.name)：\(ok2 ? "正常" : "异常")（模型 \(detail2)）"
-                        self.detailLabel.stringValue = ok2 ? "常驻隧道在跑，远端转发与模型接口正常" : "点「修复连接」，或看下方日志里的反馈"
+                        self.updateStatusPill(ok: ok2, text: ok2 ? "正常 · 模型 200" : "异常 · \(detail2)")
+                        self.reloadServerUI()
                     }
                 }
             }
@@ -758,23 +1058,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     // MARK: actions
-    @objc func onServerChanged() {
-        config.selected = max(0, serverPopup.indexOfSelectedItem)
-        saveConfig(config)
-        logView.string = "（本次会话日志从这里开始）\n"
-        DispatchQueue.global().async {
-            let r = cleanupOldLogs()
-            DispatchQueue.main.async {
-                if r.removed > 0 || r.trimmed > 0 {
-                    self.actionLabel.stringValue = "日志保留最近 7 天：删除 \(r.removed) 个旧文件，裁剪 \(r.trimmed) 个文件"
-                }
-            }
-        }
-        reloadServerUI()
-        refreshStatus()
-        if let s = current { touch(s, "切换") }
-    }
-
     @objc func onAddServer() {
         let alert = NSAlert(); alert.messageText = "添加 SSH 服务器"
         alert.informativeText = "填写显示名、隧道用 Host（会写入 RemoteForward 配置）和探测用 Host（桌面端连接用的别名）。"
