@@ -339,6 +339,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var fields: [String: NSTextField] = [:]
     var busy = false
     var timer: Timer?
+    var feedback: [String] = []   // 本次会话的操作反馈，统一显示到「隧道与日志」
     let sessionSince: String = {
         let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return f.string(from: Date())
@@ -618,17 +619,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let (_, out) = shell(cmd, timeout: timeout)
             DispatchQueue.main.async {
                 self.busy = false
+                self.appendFeedback(out.isEmpty ? "\(desc) 完成" : out, title: desc)
                 self.actionLabel.stringValue = out.isEmpty ? "\(desc) 完成" : (out.split(separator: "\n").last.map(String.init) ?? "\(desc) 完成")
                 done?()
             }
         }
     }
 
+    func appendFeedback(_ text: String, title: String? = nil) {
+        let f = DateFormatter(); f.dateFormat = "HH:mm:ss"
+        let stamp = f.string(from: Date())
+        if let t = title { feedback.append("[\(stamp)] —— \(t) ——") }
+        for line in text.components(separatedBy: "\n") where !line.isEmpty {
+            feedback.append("[\(stamp)] " + line)
+        }
+        if feedback.count > 300 { feedback.removeFirst(feedback.count - 300) }
+        refreshLog()
+    }
+
     func refreshLog() {
         let host = current?.sshHost ?? "my-tunnel"
         let cmd = "tail -n 400 '\(ROOT)/log/tunnel-resident-\(host).log' 2>/dev/null | awk -v s='\(sessionSince)' '{ ts=substr($0,1,19); if (ts ~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/) { keep = (ts >= s) } if (keep) print }'"
         let (_, out) = shell(cmd, timeout: 6)
-        logView.string = "（本次会话日志，\(sessionSince) 起；旧日志已隐藏）\n" + (out.isEmpty ? "（暂无新日志）" : out)
+        var body = "（本次会话日志，\(sessionSince) 起；旧日志已隐藏）\n"
+        body += out.isEmpty ? "（隧道日志暂无新内容）" : out
+        if !feedback.isEmpty {
+            body += "\n—— 操作反馈（本次会话）——\n" + feedback.joined(separator: "\n")
+        }
+        logView.string = body
         logView.scrollToEndOfDocument(nil)
     }
 
@@ -801,6 +819,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     _ = shell("/usr/bin/open -a '" + CHATGPT_APP + "'")
                     self.busy = false
                     self.actionLabel.stringValue = "ChatGPT 已在代理模式运行，已切到前台"
+                    self.appendFeedback("ChatGPT 已在代理模式运行，已切到前台", title: "启动 ChatGPT")
                     appendRawHistory("启动 ChatGPT（已在代理模式）")
                     return
                 }
@@ -814,6 +833,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.busy = false
                 if err.isEmpty {
                     self.actionLabel.stringValue = "已按代理模式启动 ChatGPT（Clash 7897 + magpie 3425）"
+                    self.appendFeedback(err, title: "启动 ChatGPT")
                     appendRawHistory("启动 ChatGPT（代理模式）")
                 } else {
                     self.actionLabel.stringValue = "启动失败：\(err)"
@@ -899,8 +919,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let (_, out) = shell(cmd, timeout: 90)
             DispatchQueue.main.async {
                 self.busy = false
-                self.setupView.string = serverSetupText(s) + "\n\n==== 服务器依赖检查 ====\n" + (out.isEmpty ? "（检查失败：确认探测 Host 可登录）" : out)
-                self.actionLabel.stringValue = "依赖检查完成"
+                self.appendFeedback(out.isEmpty ? "（检查失败：确认探测 Host 可登录）" : out,
+                                    title: "服务器依赖检查（\(s.name)）")
+                self.actionLabel.stringValue = "依赖检查完成，结果见「隧道与日志」"
                 appendRawHistory("检查服务器依赖")
             }
         }
