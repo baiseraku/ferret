@@ -323,7 +323,7 @@ func serverSetupText(_ s: SavedServer) -> String {
         .replacingOccurrences(of: "%PROXYPORT%", with: "\(s.remoteProxyPort)")
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 860, height: 780),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
@@ -351,9 +351,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return config.servers[i]
     }
 
+    func buildMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "显示窗口", action: #selector(onShowWindow), keyEquivalent: "0")
+        appMenu.addItem(NSMenuItem.separator())
+        appMenu.addItem(withTitle: "退出 远程隧道", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        NSApp.mainMenu = main
+    }
+
+    @objc func onShowWindow() {
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)   // 只隐藏窗口，进程继续跑（常驻隧道不受影响）
+        return false
+    }
+
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
+        buildMenu()
         buildUI()
+        window.delegate = self
         window.title = "远程隧道"
         window.center()
         // 防止恢复成屏幕外的位置导致“看不到窗口”
@@ -378,7 +402,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.refreshLog()
         }
     }
-    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
+    // 关闭窗口只是隐藏，不退出程序（退出用 ⌘Q 或菜单）
+    func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
+
+    // Dock 图标再次点击 / 重新 open 时把窗口显示回来
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        return true
+    }
 
     // MARK: UI
     func buildUI() {
