@@ -826,7 +826,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
     }
     @objc func onRefresh() { refreshStatus(); refreshLog() }
-    // MARK: 整合「Codex 代理启动」：确保 Clash/magpie，并以 --proxy-server 启动 ChatGPT
+    // MARK: 本机代理启动：确保 Clash/magpie，并以 --proxy-server 启动 ChatGPT（原独立启动器的功能）
     func portOpen(_ port: Int) -> Bool {
         shell("/usr/bin/nc -z -G 2 127.0.0.1 \(port)").0 == 0
     }
