@@ -51,10 +51,43 @@ func shell(_ command: String, timeout: TimeInterval = 120) -> (Int32, String) {
     return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
 }
 
+func sshConfigValues(_ host: String) -> (hostName: String, port: Int, user: String, identity: String)? {
+    guard let text = try? String(contentsOfFile: SSH_CONFIG, encoding: .utf8) else { return nil }
+    var h: String?; var p = 22; var u: String?; var id = "~/.ssh/id_ed25519"
+    var inside = false
+    for raw in text.components(separatedBy: "\n") {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("#") { continue }
+        if line.hasPrefix("Host ") {
+            let names = line.dropFirst(5).split(separator: " ").map(String.init)
+            inside = names.contains(host)
+            continue
+        }
+        guard inside else { continue }
+        let parts = line.split(separator: " ", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { continue }
+        switch parts[0].lowercased() {
+        case "hostname": h = parts[1]
+        case "port": p = Int(parts[1]) ?? p
+        case "user": u = parts[1]
+        case "identityfile": id = parts[1]
+        default: break
+        }
+    }
+    guard let hn = h, let un = u else { return nil }
+    return (hn, p, un, id)
+}
+
 func loadConfig() -> AppConfig {
     try? FileManager.default.createDirectory(atPath: SUPPORT, withIntermediateDirectories: true)
     if let d = try? Data(contentsOf: URL(fileURLWithPath: CONFIG_FILE)),
-       let c = try? JSONDecoder().decode(AppConfig.self, from: d), !c.servers.isEmpty {
+       var c = try? JSONDecoder().decode(AppConfig.self, from: d), !c.servers.isEmpty {
+        for i in c.servers.indices where c.servers[i].hostName.isEmpty {
+            if let v = sshConfigValues(c.servers[i].sshHost) {
+                c.servers[i].hostName = v.hostName; c.servers[i].port = v.port
+                c.servers[i].userName = v.user; c.servers[i].identityFile = v.identity
+            }
+        }
         return c
     }
     // 旧版单服务器配置迁移
@@ -84,9 +117,9 @@ func sshBlock(_ s: SavedServer) -> String {
     return """
     \(b)
     Host \(s.sshHost)
-      HostName \(s.hostName.isEmpty ? "CHANGE-ME.example.com" : s.hostName)
+      HostName \(s.hostName)
       Port \(s.port)
-      User \(s.userName.isEmpty ? "CHANGE-ME" : s.userName)
+      User \(s.userName)
       IdentityFile \(s.identityFile)
       IdentitiesOnly yes
       PubkeyAuthentication yes
@@ -102,6 +135,8 @@ func sshBlock(_ s: SavedServer) -> String {
 }
 
 func writeSSHBlock(_ s: SavedServer) -> String {
+    if s.hostName.isEmpty { return "请先填写「SSH 主机名」再保存（不会写占位符覆盖现有配置）" }
+    if s.userName.isEmpty { return "请先填写「SSH 用户名」再保存" }
     guard var text = try? String(contentsOfFile: SSH_CONFIG, encoding: .utf8) else { return "读不到 \(SSH_CONFIG)" }
     let (b, e) = blockMarkers(s.sshHost)
     var lines = text.components(separatedBy: "\n")
