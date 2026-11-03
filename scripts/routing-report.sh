@@ -1,7 +1,7 @@
 #!/bin/bash
 # 生成"远端代理分流"报告：服务器上 OpenAI 是否走隧道、其余是否直连。
-# 用法: scripts/routing-report.sh [ssh别名]   
-ALIAS="${1:?用法: routing-report.sh <探测用 SSH 别名>}"
+# 用法: scripts/routing-report.sh [ssh别名]   （默认 my-server）
+ALIAS="${1:-my-server}"
 SSH=/usr/bin/ssh
 TS="$(date '+%F %T')"
 out=$("$SSH" -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes \

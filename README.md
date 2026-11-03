@@ -1,12 +1,12 @@
-# 远程隧道（Remote Tunnel）
+# Ferret
 
-一个 macOS 小工具：用 **launchd 常驻 SSH 反向隧道**，把远程服务器的模型网关（magpie `3425`）和出网代理（`58922`）转发回本机；并提供一个图形界面管理多台服务器、查看连接历史、监测远端代理分流。
+一个 macOS 小工具（名字取自雪貂：天生在隧道里穿行）：用 **launchd 常驻 SSH 反向隧道**，把远程服务器的模型网关（magpie `3425`）和出网代理（`58922`）转发回本机；并提供一个图形界面管理多台服务器、查看连接历史、监测远端代理分流。
 
 ## 组件
 
 | 组件 | 说明 |
 | --- | --- |
-| `app/` | Swift + AppKit 图形界面（`远程隧道.app`） |
+| `app/` | Swift + AppKit 图形界面（`Ferret.app`） |
 | `scripts/resident.sh` | 管理每台服务器一个的 launchd 常驻隧道（`local.remotetunnel.tunnel-<host>`） |
 | `scripts/tunnel-resident.sh` | 常驻 ssh 进程本体（断线重连） |
 | `scripts/routing-report.sh` | 在远端生成"代理分流报告"（OpenAI 走隧道 / 其余直连） |
@@ -31,7 +31,7 @@ Clash 7897   ◀── RemoteForward 58922 ─ 127.0.0.1:58922（mihomo 的上�
 
 ```bash
 cd app
-./scripts/build.sh      # 生成 build/远程隧道.app
+./scripts/build.sh      # 生成 build/Ferret.app
 ./scripts/install.sh    # 安装到 /Applications
 ```
 

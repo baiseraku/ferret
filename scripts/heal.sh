@@ -2,12 +2,12 @@
 # 修复"界面已连接但模型超时"：停止常驻隧道 → 清理服务器残留 SSH 会话 → 释放端口 → 重启隧道 → 验证。
 # 用法: heal.sh check|heal|status [隧道Host] [探测Host]
 set -uo pipefail
-ROOT="${CODEX_REMOTE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+ROOT="${FERRET_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 MODE="${1:-status}"
 HOST="${2:-${CODEX_TUNNEL_HOST:-my-tunnel}}"
 PROBE="${3:-${CODEX_PROBE_HOST:-my-server}}"
 SLUG=$(printf '%s' "$HOST" | tr -c 'A-Za-z0-9-' '-')
-LABEL="local.remotetunnel.remote-tunnel-$SLUG"
+LABEL="local.ferret.tunnel-$SLUG"
 LOG="$ROOT/log/heal.log"
 SSH=/usr/bin/ssh
 UID_NUM="$(id -u)"

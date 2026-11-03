@@ -2,9 +2,9 @@
 # 编译 Codex 隧道.app（Swift + AppKit，无需 Xcode 工程）
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/build/远程隧道.app"
+APP="$ROOT/build/Ferret.app"
 mkdir -p "$ROOT/build" "$APP/Contents/MacOS" "$APP/Contents/Resources"
-/usr/bin/swiftc -O "$ROOT/src/main.swift" -o "$APP/Contents/MacOS/RemoteTunnel" -framework Cocoa
+/usr/bin/swiftc -O "$ROOT/src/main.swift" -o "$APP/Contents/MacOS/Ferret" -framework Cocoa
 
 # 图标：没有 assets/AppIcon.icns 时先生成
 mkdir -p "$ROOT/assets"
@@ -19,10 +19,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>远程隧道</string>
-  <key>CFBundleDisplayName</key><string>远程隧道</string>
-  <key>CFBundleIdentifier</key><string>local.ferret.remote-tunnel-app</string>
-  <key>CFBundleExecutable</key><string>RemoteTunnel</string>
+  <key>CFBundleName</key><string>Ferret</string>
+  <key>CFBundleDisplayName</key><string>Ferret</string>
+  <key>CFBundleIdentifier</key><string>local.ferret.app</string>
+  <key>CFBundleExecutable</key><string>Ferret</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundleVersion</key><string>1</string>

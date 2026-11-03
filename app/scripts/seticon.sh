@@ -7,7 +7,7 @@ mkdir -p "$ROOT/assets" "$ROOT/build"
 rm -rf "$ROOT/build/AppIcon.iconset"
 "$ROOT/build/makeicon" "$ROOT/build/AppIcon.iconset"
 /usr/bin/iconutil -c icns "$ROOT/build/AppIcon.iconset" -o "$ROOT/assets/AppIcon.icns"
-APP="/Applications/远程隧道.app"
+APP="/Applications/Ferret.app"
 if [ -d "$APP" ]; then
   cp "$ROOT/assets/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
   /usr/bin/codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true

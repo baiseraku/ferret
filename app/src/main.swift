@@ -1,9 +1,9 @@
 import Cocoa
 
-let ROOT = ProcessInfo.processInfo.environment["REMOTE_TUNNEL_ROOT"]
-    ?? (NSHomeDirectory() + "/Documents/DSH/codex-remote")
+let ROOT = ProcessInfo.processInfo.environment["FERRET_ROOT"]
+    ?? (NSHomeDirectory() + "/Documents/DSH/ferret")
 let SSH_CONFIG = NSHomeDirectory() + "/.ssh/config"
-let SUPPORT = NSHomeDirectory() + "/Library/Application Support/RemoteTunnel"
+let SUPPORT = NSHomeDirectory() + "/Library/Application Support/Ferret"
 let CONFIG_FILE = SUPPORT + "/config.json"
 let HISTORY_FILE = ROOT + "/log/history.log"
 let CHATGPT_APP = "/Applications/ChatGPT.app"
@@ -160,7 +160,7 @@ func saveConfig(_ c: AppConfig) {
 }
 
 func blockMarkers(_ host: String) -> (String, String) {
-    ("# >>> remote-tunnel-app \(host)", "# <<< remote-tunnel-app \(host)")
+    ("# >>> ferret-app \(host)", "# <<< ferret-app \(host)")
 }
 
 func sshBlock(_ s: SavedServer) -> String {
@@ -362,7 +362,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let appMenu = NSMenu()
         appMenu.addItem(withTitle: "显示窗口", action: #selector(onShowWindow), keyEquivalent: "0")
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "退出 远程隧道", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: "退出 Ferret", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         NSApp.mainMenu = main
     }
@@ -382,7 +382,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         buildMenu()
         buildUI()
         window.delegate = self
-        window.title = "远程隧道"
+        window.title = "Ferret"
         window.isRestorable = false
         window.center()
         // 防止恢复到屏幕外（多显示器/旧状态）：没有屏幕包含窗口时强制放回主屏
@@ -465,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return b
         }
 
-        let title = NSTextField(labelWithString: "远程隧道（常驻反向转发：模型网关 + 出网代理）")
+        let title = NSTextField(labelWithString: "Ferret · 常驻反向转发（模型网关 + 出网代理）")
         title.font = NSFont.boldSystemFont(ofSize: 15)
         stack.addArrangedSubview(title)
 
@@ -533,9 +533,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         func addRow(_ label: String, _ key: String) {
             let row = NSStackView(); row.orientation = .horizontal; row.spacing = 8
             let l = NSTextField(labelWithString: label); l.alignment = .left
-            l.widthAnchor.constraint(equalToConstant: 140).isActive = true
+            l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let lw = l.widthAnchor.constraint(equalToConstant: 140); lw.priority = .defaultHigh; lw.isActive = true
             let f = NSTextField(string: ""); f.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-            f.widthAnchor.constraint(equalToConstant: 190).isActive = true
+            f.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            let fw = f.widthAnchor.constraint(equalToConstant: 190); fw.priority = .defaultHigh; fw.isActive = true
             fields[key] = f
             row.addArrangedSubview(l); row.addArrangedSubview(f)
             if rowIndex % 2 == 0 { colA.addArrangedSubview(row) } else { colB.addArrangedSubview(row) }

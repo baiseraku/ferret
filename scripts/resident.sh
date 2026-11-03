@@ -1,13 +1,13 @@
 #!/bin/bash
 # 管理常驻隧道（launchd user agent）。支持多台服务器，每台一个 launchd 任务。
 #   resident.sh install|start|stop|status|uninstall [sshHost]
-#   sshHost 默认 my-tunnel；对应的 launchd label 为 local.remotetunnel.tunnel-<host>
+#   sshHost 默认 my-tunnel；对应的 launchd label 为 local.ferret.tunnel-<host>
 set -uo pipefail
-ROOT="${CODEX_REMOTE_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+ROOT="${FERRET_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
 MODE="${1:-status}"
 HOST="${2:-${CODEX_TUNNEL_HOST:-my-tunnel}}"
 SLUG=$(printf '%s' "$HOST" | tr -c 'A-Za-z0-9-' '-' )
-LABEL="local.remotetunnel.tunnel-$SLUG"
+LABEL="local.ferret.tunnel-$SLUG"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$ROOT/log/tunnel-resident-$HOST.log"
 UID_NUM="$(id -u)"
@@ -18,8 +18,8 @@ pid_of() { /bin/launchctl print "gui/$UID_NUM/$LABEL" 2>/dev/null | awk '/pid = 
 
 write_plist() {
   mkdir -p "$HOME/Library/LaunchAgents" "$ROOT/log" "$HOME/.local/bin"
-  cp "$ROOT/scripts/tunnel-resident.sh" "$HOME/.local/bin/remote-tunnel-resident"
-  chmod +x "$HOME/.local/bin/remote-tunnel-resident"
+  cp "$ROOT/scripts/tunnel-resident.sh" "$HOME/.local/bin/ferret-resident"
+  chmod +x "$HOME/.local/bin/ferret-resident"
   cat > "$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -27,10 +27,10 @@ write_plist() {
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>/bin/bash</string><string>$HOME/.local/bin/remote-tunnel-resident</string></array>
+  <array><string>/bin/bash</string><string>$HOME/.local/bin/ferret-resident</string></array>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>CODEX_REMOTE_ROOT</key><string>$ROOT</string>
+    <key>FERRET_ROOT</key><string>$ROOT</string>
     <key>CODEX_TUNNEL_HOST</key><string>$HOST</string>
   </dict>
   <key>RunAtLoad</key><true/>
