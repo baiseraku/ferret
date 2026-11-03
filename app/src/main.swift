@@ -553,6 +553,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func applicationDidFinishLaunching(_ n: Notification) {
         NSApp.setActivationPolicy(.regular)
+        // 便于验证两种外观（不设置时跟随系统）
+        switch ProcessInfo.processInfo.environment["FERRET_APPEARANCE"] {
+        case "light": NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":  NSApp.appearance = NSAppearance(named: .darkAqua)
+        default: break
+        }
         buildMenu()
         buildUI()
         window.delegate = self
