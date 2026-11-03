@@ -61,13 +61,13 @@ func loadConfig() -> AppConfig {
     for old in [SUPPORT + "/config.json", NSHomeDirectory() + "/Library/Application Support/CodexTunnel/config.json"] {
         if let d = try? Data(contentsOf: URL(fileURLWithPath: old)),
            let l = try? JSONDecoder().decode(LegacyConfig.self, from: d) {
-            let s = SavedServer(name: "示例服务器", sshHost: l.sshHost ?? "my-tunnel", probeHost: l.desktopHost ?? "my-server",
+            let s = SavedServer(name: "默认服务器", sshHost: l.sshHost ?? "my-tunnel", probeHost: l.desktopHost ?? "my-server",
                                 remoteModelPort: l.remoteModelPort ?? 3425, remoteProxyPort: l.remoteProxyPort ?? 58922,
                                 localMagpiePort: l.localMagpiePort ?? 3425, localClashPort: l.localClashPort ?? 7897)
             return AppConfig(servers: [s], selected: 0)
         }
     }
-    return AppConfig(servers: [SavedServer(name: "示例服务器", sshHost: "my-tunnel", probeHost: "my-server")], selected: 0)
+    return AppConfig(servers: [SavedServer(name: "默认服务器", sshHost: "my-tunnel", probeHost: "my-server")], selected: 0)
 }
 
 func saveConfig(_ c: AppConfig) {
@@ -228,7 +228,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ops = NSStackView(); ops.orientation = .horizontal; ops.spacing = 8
         for (t, s) in [("启动", #selector(onStart)), ("停止", #selector(onStop)), ("重启", #selector(onRestart)),
                        ("修复连接", #selector(onHeal)), ("刷新状态", #selector(onRefresh)),
-                       ("打开日志", #selector(onOpenLogs)), ("查看历史", #selector(onOpenHistory)),
+                       ("打开日志", #selector(onOpenLogs)), ("复制日志", #selector(onCopyLog)), ("查看历史", #selector(onOpenHistory)),
                        ("清空历史", #selector(onClearHistory))] {
             ops.addArrangedSubview(btn(t, s))
         }
@@ -266,7 +266,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             cfgOps.addArrangedSubview(btn(t, s))
         }
         v1.addArrangedSubview(cfgOps)
-        logView.isEditable = false; logView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        logView.isEditable = false; logView.isSelectable = true; logView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let logScroll = NSScrollView(); logScroll.documentView = logView; logScroll.hasVerticalScroller = true
         logScroll.borderType = .bezelBorder; logScroll.translatesAutoresizingMaskIntoConstraints = false
         logScroll.heightAnchor.constraint(equalToConstant: 190).isActive = true
@@ -283,7 +283,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         repOps.addArrangedSubview(btn("刷新分流报告", #selector(onRefreshReport)))
         repOps.addArrangedSubview(btn("复制报告", #selector(onCopyReport)))
         v2.addArrangedSubview(repOps)
-        reportView.isEditable = false; reportView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        reportView.isEditable = false; reportView.isSelectable = true; reportView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
         let repScroll = NSScrollView(); repScroll.documentView = reportView; repScroll.hasVerticalScroller = true
         repScroll.borderType = .bezelBorder; repScroll.translatesAutoresizingMaskIntoConstraints = false
         repScroll.heightAnchor.constraint(equalToConstant: 330).isActive = true
@@ -452,6 +452,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func onRestart() { guard let s = current else { return }; touch(s, "重启"); run("重启隧道", "cd \(ROOT) && ./scripts/resident.sh stop \(s.sshHost); ./scripts/resident.sh start \(s.sshHost)") { self.refreshStatus() } }
     @objc func onHeal() { guard let s = current else { return }; touch(s, "修复"); run("修复连接", "cd \(ROOT) && ./scripts/heal.sh heal") { self.refreshStatus(); self.refreshLog() } }
     @objc func onRefresh() { refreshStatus(); refreshLog() }
+    @objc func onCopyLog() {
+        let text: String
+        if let sel = logView.selectedRanges.first as? NSRange, sel.length > 0 {
+            text = (logView.string as NSString).substring(with: sel)
+        } else {
+            text = logView.string
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        actionLabel.stringValue = "日志已复制（\(text.count) 字符）"
+    }
+
     @objc func onOpenLogs() { NSWorkspace.shared.open(URL(fileURLWithPath: ROOT + "/log")) }
     @objc func onOpenHistory() {
         if !FileManager.default.fileExists(atPath: HISTORY_FILE) { try? "".write(toFile: HISTORY_FILE, atomically: true, encoding: .utf8) }
