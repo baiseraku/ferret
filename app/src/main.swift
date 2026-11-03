@@ -6,6 +6,11 @@ let SSH_CONFIG = NSHomeDirectory() + "/.ssh/config"
 let SUPPORT = NSHomeDirectory() + "/Library/Application Support/RemoteTunnel"
 let CONFIG_FILE = SUPPORT + "/config.json"
 let HISTORY_FILE = ROOT + "/log/history.log"
+let CHATGPT_APP = "/Applications/ChatGPT.app"
+let MAGPIE_APP = "/Applications/magpie.app"
+let LOCAL_PROXY = "http://127.0.0.1:7897"
+let LOCAL_PROXY_PORT = 7897
+let LOCAL_MAGPIE_PORT = 3425
 
 struct SavedServer: Codable {
     var name: String
@@ -34,6 +39,52 @@ struct LegacyConfig: Codable {
     var remoteProxyPort: Int?
     var localMagpiePort: Int?
     var localClashPort: Int?
+}
+
+// 日志保留最近 N 天：更早的整文件删除，活跃文件里更早的行裁掉
+func cleanupOldLogs(days: Int = 7) -> (removed: Int, trimmed: Int) {
+    let fm = FileManager.default
+    let cutoffDate = Calendar.current.date(byAdding: .day, value: -days, to: Date()) ?? Date()
+    let df = DateFormatter(); df.dateFormat = "yyyy-MM-dd"
+    let cutoff = df.string(from: cutoffDate)
+
+    func trimLines(_ path: String) -> Int {
+        guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { return 0 }
+        let lines = text.components(separatedBy: "\n")
+        var kept: [String] = []
+        var changed = false
+        for line in lines {
+            let prefix = String(line.prefix(10))
+            if prefix.count == 10, prefix.range(of: "^[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) != nil {
+                if prefix < cutoff { changed = true; continue }
+            }
+            kept.append(line)
+        }
+        if changed { try? kept.joined(separator: "\n").write(toFile: path, atomically: true, encoding: .utf8) }
+        return changed ? 1 : 0
+    }
+
+    var removed = 0, trimmed = 0
+    let logDir = ROOT + "/log"
+    if let files = try? fm.contentsOfDirectory(atPath: logDir) {
+        for name in files where name.hasSuffix(".log") || name.hasSuffix(".out") || name.hasSuffix(".err") {
+            let path = logDir + "/" + name
+            if let attrs = try? fm.attributesOfItem(atPath: path),
+               let mtime = attrs[.modificationDate] as? Date, mtime < cutoffDate {
+                try? fm.removeItem(atPath: path); removed += 1
+            } else {
+                trimmed += trimLines(path)
+            }
+        }
+    }
+    let launcherLog = NSHomeDirectory() + "/Library/Logs/CodexProxyLauncher.log"
+    if let attrs = try? fm.attributesOfItem(atPath: launcherLog),
+       let mtime = attrs[.modificationDate] as? Date, mtime < cutoffDate {
+        try? fm.removeItem(atPath: launcherLog); removed += 1
+    } else if fm.fileExists(atPath: launcherLog) {
+        trimmed += trimLines(launcherLog)
+    }
+    return (removed, trimmed)
 }
 
 func shell(_ command: String, timeout: TimeInterval = 120) -> (Int32, String) {
@@ -176,6 +227,15 @@ func removeSSHBlock(_ host: String) {
     try? text.write(toFile: SSH_CONFIG, atomically: true, encoding: .utf8)
 }
 
+func appendRawHistory(_ action: String) {
+    try? FileManager.default.createDirectory(atPath: ROOT + "/log", withIntermediateDirectories: true)
+    let line = ISO8601DateFormatter().string(from: Date()) + " | " + action + "\n"
+    if let d = line.data(using: .utf8) {
+        if let fh = FileHandle(forWritingAtPath: HISTORY_FILE) { fh.seekToEndOfFile(); fh.write(d); try? fh.close() }
+        else { try? line.write(toFile: HISTORY_FILE, atomically: true, encoding: .utf8) }
+    }
+}
+
 func appendHistory(_ action: String, _ s: SavedServer) {
     try? FileManager.default.createDirectory(atPath: ROOT + "/log", withIntermediateDirectories: true)
     let line = String(format: "%@ | %@ | %@ (%@ → %@)\n", ISO8601DateFormatter().string(from: Date()), action, s.name, s.sshHost, s.probeHost)
@@ -216,10 +276,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         buildUI()
         window.title = "远程隧道"
         window.center()
+        // 防止恢复成屏幕外的位置导致“看不到窗口”
+        if !NSScreen.screens.contains(where: { $0.visibleFrame.intersects(window.frame) }) {
+            window.setFrameOrigin(NSPoint(x: 120, y: 120))
+        }
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
         NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         logView.string = "（本次会话日志从这里开始）\n"
+        DispatchQueue.global().async {
+            let r = cleanupOldLogs()
+            DispatchQueue.main.async {
+                if r.removed > 0 || r.trimmed > 0 {
+                    self.actionLabel.stringValue = "日志保留最近 7 天：删除 \(r.removed) 个旧文件，裁剪 \(r.trimmed) 个文件"
+                }
+            }
+        }
         reloadServerUI()
         refreshStatus()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
@@ -288,6 +360,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             ops.addArrangedSubview(btn(t, sel))
         }
         stack.addArrangedSubview(ops)
+
+        let codexRow = NSStackView(); codexRow.orientation = .horizontal; codexRow.spacing = 8
+        codexRow.addArrangedSubview(NSTextField(labelWithString: "本机 ChatGPT 代理启动："))
+        codexRow.addArrangedSubview(btn("启动 ChatGPT（走 Clash 代理）", #selector(onLaunchChatGPT)))
+        stack.addArrangedSubview(codexRow)
 
         // 标签页
         let tabs = NSTabView()
@@ -492,6 +569,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         config.selected = max(0, serverPopup.indexOfSelectedItem)
         saveConfig(config)
         logView.string = "（本次会话日志从这里开始）\n"
+        DispatchQueue.global().async {
+            let r = cleanupOldLogs()
+            DispatchQueue.main.async {
+                if r.removed > 0 || r.trimmed > 0 {
+                    self.actionLabel.stringValue = "日志保留最近 7 天：删除 \(r.removed) 个旧文件，裁剪 \(r.trimmed) 个文件"
+                }
+            }
+        }
         reloadServerUI()
         refreshStatus()
         if let s = current { touch(s, "切换") }
@@ -539,6 +624,100 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func onRestart() { guard let s = current else { return }; touch(s, "重启"); run("重启隧道", "cd \(ROOT) && ./scripts/resident.sh stop \(s.sshHost); ./scripts/resident.sh start \(s.sshHost)") { self.refreshStatus() } }
     @objc func onHeal() { guard let s = current else { return }; touch(s, "修复"); run("修复连接", "cd \(ROOT) && ./scripts/heal.sh heal") { self.refreshStatus(); self.refreshLog() } }
     @objc func onRefresh() { refreshStatus(); refreshLog() }
+    // MARK: 整合「Codex 代理启动」：确保 Clash/magpie，并以 --proxy-server 启动 ChatGPT
+    func portOpen(_ port: Int) -> Bool {
+        shell("/usr/bin/nc -z -G 2 127.0.0.1 \(port)").0 == 0
+    }
+
+    func chatGPTPid() -> String {
+        shell("/usr/bin/pgrep -f 'ChatGPT.app/Contents/MacOS/ChatGPT' | head -1").1
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func showAlert(_ title: String, _ text: String) {
+        let a = NSAlert(); a.messageText = title; a.informativeText = text
+        a.addButton(withTitle: "好"); a.runModal()
+    }
+
+    func openChatGPT() -> String {
+        var cmd = "/usr/bin/open"
+        for k in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"] {
+            cmd += " --env " + "'" + k + "=" + LOCAL_PROXY + "'"
+        }
+        for k in ["NO_PROXY", "no_proxy"] {
+            cmd += " --env '" + k + "=localhost,127.0.0.1,::1'"
+        }
+        cmd += " --env 'NODE_USE_ENV_PROXY=1'"
+        cmd += " -a '" + CHATGPT_APP + "'"
+        cmd += " --args '--proxy-server=" + LOCAL_PROXY + "' '--proxy-bypass-list=localhost;127.0.0.1;[::1]'"
+        let (rc, out) = shell(cmd, timeout: 30)
+        return rc == 0 ? "" : out
+    }
+
+    @objc func onLaunchChatGPT() {
+        guard !busy else { return }
+        busy = true
+        actionLabel.stringValue = "检查 Clash / magpie…"
+        DispatchQueue.global().async {
+            if !self.portOpen(LOCAL_PROXY_PORT) {
+                DispatchQueue.main.async {
+                    self.busy = false
+                    self.showAlert("Clash 7897 未运行", "请先打开 Clash Verge，确认 127.0.0.1:7897 可用，再点此按钮。")
+                }
+                return
+            }
+            if !self.portOpen(LOCAL_MAGPIE_PORT) {
+                _ = shell("/usr/bin/open -g -a '" + MAGPIE_APP + "'")
+                var waited = 0.0
+                while waited < 10.0 && !self.portOpen(LOCAL_MAGPIE_PORT) { usleep(300_000); waited += 0.3 }
+                if !self.portOpen(LOCAL_MAGPIE_PORT) {
+                    DispatchQueue.main.async {
+                        self.busy = false
+                        self.showAlert("magpie 3425 未就绪", "请先打开 magpie（Dock 或 /Applications/magpie.app），再重试。")
+                    }
+                    return
+                }
+            }
+            let pid = self.chatGPTPid()
+            var proxied = false
+            if !pid.isEmpty {
+                let ps = shell("/bin/ps -o command= -p \(pid)").1
+                proxied = ps.contains("--proxy-server=" + LOCAL_PROXY)
+            }
+            DispatchQueue.main.async {
+                if proxied {
+                    _ = shell("/usr/bin/open -a '" + CHATGPT_APP + "'")
+                    self.busy = false
+                    self.actionLabel.stringValue = "ChatGPT 已在代理模式运行，已切到前台"
+                    appendRawHistory("启动 ChatGPT（已在代理模式）")
+                    return
+                }
+                let a = NSAlert()
+                a.messageText = pid.isEmpty ? "启动 ChatGPT（走 Clash 代理）？" : "ChatGPT 正在运行，但没有走代理"
+                a.informativeText = pid.isEmpty
+                    ? "将以 --proxy-server=127.0.0.1:7897 打开（模型走本机 magpie 3425，其余经 Clash）。"
+                    : "需要退出并重新打开一次，代理参数才会生效。"
+                a.addButton(withTitle: "继续"); a.addButton(withTitle: "取消")
+                guard a.runModal() == .alertFirstButtonReturn else { self.busy = false; return }
+                if !pid.isEmpty {
+                    self.actionLabel.stringValue = "正在退出 ChatGPT…"
+                    _ = shell("/usr/bin/osascript -e 'tell application id \"com.openai.codex\" to quit'", timeout: 20)
+                    var waited = 0.0
+                    while waited < 15.0 && !self.chatGPTPid().isEmpty { sleep(1); waited += 1 }
+                }
+                let err = self.openChatGPT()
+                self.busy = false
+                if err.isEmpty {
+                    self.actionLabel.stringValue = "已按代理模式启动 ChatGPT（Clash 7897 + magpie 3425）"
+                    appendRawHistory("启动 ChatGPT（代理模式）")
+                } else {
+                    self.actionLabel.stringValue = "启动失败：\(err)"
+                    self.showAlert("ChatGPT 启动失败", err)
+                }
+            }
+        }
+    }
+
     @objc func onCopyLog() {
         let text: String
         if let sel = logView.selectedRanges.first as? NSRange, sel.length > 0 {

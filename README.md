@@ -54,7 +54,7 @@ cd app
 ./scripts/routing-report.sh   my-server   # 远端分流报告
 ```
 
-### 4. 连接历史
+### 4. 日志与连接历史
 
 界面上的启动/停止/切换/检测等操作会写入 `log/history.log`；界面可「查看历史」「清空历史」。
 
