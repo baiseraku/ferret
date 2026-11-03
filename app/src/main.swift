@@ -285,8 +285,11 @@ func serverSetupText(_ s: SavedServer) -> String {
        http_headers = { "x-openai-actor-authorization" = "magpie" }
        requires_openai_auth = false
        [mcp_servers.magpie]
-       url = "http://127.0.0.1:3425/mcp/magpie/hub"
+       url = "http://127.0.0.1:%MODELPORT%/mcp/magpie/hub"
        删除其它逐条 [mcp_servers.*]。
+
+       说明：这里的网关与 MCP 共用「远端模型端口」%MODELPORT%（本机端口映射来自隧道 RemoteForward）。
+       若在软件里改了这个端口，base_url 与 MCP hub URL 两处都要改成同一个值。
 
     6. 服务器 sshd 开启保活（需要 root）
        ClientAliveInterval 15
@@ -301,6 +304,7 @@ func serverSetupText(_ s: SavedServer) -> String {
     - bash -lc 'curl -s -o /dev/null -w "%{http_code}" https://api.openai.com/v1/models'  → 401
     - bash -lc 'curl -s -o /dev/null -w "%{http_code}" https://github.com'  → 200
     - bash -lc 'echo $HTTPS_PROXY'  → http://127.0.0.1:7890
+    - bash -lc 'curl -s -o /dev/null -w "%{http_code}" -X POST http://127.0.0.1:%MODELPORT%/mcp/magpie/hub -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}"'  → 200
     - systemctl --user is-active mihomo  → active
 
     ## 约束
@@ -883,9 +887,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         echo "openai: $(bash -lc 'curl -s -o /dev/null -m 10 -w "%{http_code}" https://api.openai.com/v1/models' 2>/dev/null)"
         echo "github: $(bash -lc 'curl -s -o /dev/null -m 8 -w "%{http_code}" https://github.com' 2>/dev/null)"
         echo "base_url: $(grep -m1 'base_url' ~/.codex/config.toml 2>/dev/null || echo MISSING)"
+        echo "mcp_hub: $(grep -A2 '^\[mcp_servers.magpie\]' ~/.codex/config.toml 2>/dev/null | grep -m1 'url' || echo MISSING)"
+        echo "mihomo 上游端口: $(grep -m1 -E '^\s*port:' ~/.config/mihomo/config.yaml 2>/dev/null || echo MISSING)  (应为 %PROXYPORT%)"
         echo "sshd keepalive: $(grep -E '^\s*ClientAliveInterval' /etc/ssh/sshd_config 2>/dev/null | head -1 || echo '未设置（需 root）')"
         """#
             .replacingOccurrences(of: "%M%", with: "\(s.remoteModelPort)")
+            .replacingOccurrences(of: "%PROXYPORT%", with: "\(s.remoteProxyPort)")
         let quoted = "'" + remote.replacingOccurrences(of: "'", with: "'\\''") + "'"
         let cmd = "/usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none \(s.probeHost) \(quoted)"
         DispatchQueue.global().async {
