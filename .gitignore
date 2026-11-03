@@ -2,4 +2,5 @@ build/
 .cache/
 log/
 *.app
+!app/assets/AppIcon.icns
 .DS_Store
