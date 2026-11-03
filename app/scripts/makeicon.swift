@@ -1,9 +1,9 @@
 import AppKit
 
-// Apple 原生风格图标：圆角方形（squircle）+ 柔和渐变 + 内发光 + 极简白色字形 + 轻微投影
+// Apple 原生风格：白底圆角方形（squircle）+ 黑色字形（参照 ChatGPT / magpie 的白底黑标）
+// 字形：两条箭头组成的循环（上→右、下←左），表达「双向转发 / 隧道」
 
 func squirclePath(in rect: NSRect, n: CGFloat = 5.0) -> NSBezierPath {
-    // 用超椭圆近似 macOS 的 squircle
     let path = NSBezierPath()
     let steps = 720
     let cx = rect.midX, cy = rect.midY
@@ -19,83 +19,76 @@ func squirclePath(in rect: NSRect, n: CGFloat = 5.0) -> NSBezierPath {
     return path
 }
 
-func drawIcon(size: CGFloat) -> NSImage {
-    let img = NSImage(size: NSSize(width: size, height: size))
+func drawIcon(size S: CGFloat) -> NSImage {
+    let img = NSImage(size: NSSize(width: S, height: S))
     img.lockFocus()
     guard let ctx = NSGraphicsContext.current?.cgContext else { img.unlockFocus(); return img }
     ctx.setShouldAntialias(true)
-    let S = size
 
-    // macOS 图标留白：内容约占 82%
+    // macOS 图标留白
     let inset = S * 0.09
     let bodyRect = NSRect(x: inset, y: inset, width: S - inset * 2, height: S - inset * 2)
     let body = squirclePath(in: bodyRect)
 
-    // 投影
+    // 底部投影
     let shadow = NSShadow()
-    shadow.shadowColor = NSColor(white: 0, alpha: 0.28)
-    shadow.shadowBlurRadius = S * 0.035
-    shadow.shadowOffset = NSSize(width: 0, height: -S * 0.012)
+    shadow.shadowColor = NSColor(white: 0, alpha: 0.16)
+    shadow.shadowBlurRadius = S * 0.03
+    shadow.shadowOffset = NSSize(width: 0, height: -S * 0.010)
     NSGraphicsContext.saveGraphicsState()
     shadow.set()
-    NSColor(srgbRed: 0.07, green: 0.12, blue: 0.22, alpha: 1).setFill()
+    NSColor.white.setFill()
     body.fill()
     NSGraphicsContext.restoreGraphicsState()
 
-    // 主体渐变（深海军蓝 → 蓝紫，苹果常用的低调双色）
+    // 白底极轻渐变（更接近系统白底图标）
     NSGraphicsContext.saveGraphicsState()
     body.addClip()
-    let top = NSColor(srgbRed: 0.24, green: 0.36, blue: 0.62, alpha: 1)
-    let bottom = NSColor(srgbRed: 0.09, green: 0.14, blue: 0.28, alpha: 1)
-    NSGradient(colors: [top, bottom])!.draw(in: bodyRect, angle: -90)
-
-    // 顶部柔和径向高光（无硬边）
-    let center = NSPoint(x: bodyRect.midX, y: bodyRect.maxY - bodyRect.height * 0.12)
-    let radial = NSGradient(colorsAndLocations:
-        (NSColor(white: 1, alpha: 0.22), 0.0),
-        (NSColor(white: 1, alpha: 0.06), 0.45),
-        (NSColor(white: 1, alpha: 0.0), 0.85))!
-    radial.draw(fromCenter: center, radius: 0,
-                toCenter: center, radius: bodyRect.width * 0.78,
-                options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
-
-    // 内描边
+    let g = NSGradient(colors: [NSColor(srgbRed: 1.0, green: 1.0, blue: 1.0, alpha: 1),
+                                NSColor(srgbRed: 0.957, green: 0.957, blue: 0.969, alpha: 1)])!
+    g.draw(in: bodyRect, angle: -90)
     NSGraphicsContext.restoreGraphicsState()
+
+    // 极细内描边（系统白底图标常见的一道浅边）
     NSGraphicsContext.saveGraphicsState()
     body.addClip()
-    body.lineWidth = S * 0.008
-    NSColor(white: 1, alpha: 0.18).setStroke()
+    body.lineWidth = max(1, S * 0.004)
+    NSColor(srgbRed: 0.80, green: 0.80, blue: 0.83, alpha: 0.55).setStroke()
     body.stroke()
     NSGraphicsContext.restoreGraphicsState()
 
-    // 字形：两条水平箭头（右去/左回），居中、留白充足
+    // 字形：两条水平箭头（上→右、下←左），线条加粗以在白底上更醒目
     NSGraphicsContext.saveGraphicsState()
     body.addClip()
-    let white = NSColor(white: 0.985, alpha: 1)
-    let stroke = S * 0.050
-    let x0 = S * 0.330, x1 = S * 0.670
-    let headW = S * 0.078, headH = S * 0.076
+    let black = NSColor(srgbRed: 0.114, green: 0.114, blue: 0.121, alpha: 1)   // #1D1D1F
+    let x0 = S * 0.285, x1 = S * 0.700
+    let stroke = S * 0.058
+    let headW = S * 0.118, headH = S * 0.112
+    let yTop = S * 0.572, yBot = S * 0.428
 
-    func arrowBody(cy: CGFloat, toRight: Bool) {
-        let path = NSBezierPath()
-        path.lineWidth = stroke
-        path.lineCapStyle = .round
-        let startX = toRight ? x0 : x1
-        let endX = toRight ? x1 - stroke * 0.1 : x0 + stroke * 0.1
-        path.move(to: NSPoint(x: startX, y: cy))
-        path.line(to: NSPoint(x: endX, y: cy))
-        white.setStroke(); path.stroke()
+    func arrow(cy: CGFloat, toRight: Bool) {
+        // 箭头尖与底边（三角形）
+        let tipX = toRight ? x1 + headW * 0.30 : x0 - headW * 0.30
+        let baseX = toRight ? tipX - headW : tipX + headW
+        let shaftEnd = baseX
+        let shaftStart = toRight ? x0 : x1
+
+        let shaft = NSBezierPath()
+        shaft.lineWidth = stroke
+        shaft.lineCapStyle = .round
+        shaft.move(to: NSPoint(x: shaftStart, y: cy))
+        shaft.line(to: NSPoint(x: shaftEnd, y: cy))
+        black.setStroke(); shaft.stroke()
 
         let head = NSBezierPath()
-        let tipX = endX + (toRight ? headW * 0.55 : -headW * 0.55)
         head.move(to: NSPoint(x: tipX, y: cy))
-        head.line(to: NSPoint(x: tipX + (toRight ? -headW : headW), y: cy + headH))
-        head.line(to: NSPoint(x: tipX + (toRight ? -headW : headW), y: cy - headH))
+        head.line(to: NSPoint(x: baseX, y: cy + headH / 2))
+        head.line(to: NSPoint(x: baseX, y: cy - headH / 2))
         head.close()
-        white.setFill(); head.fill()
+        black.setFill(); head.fill()
     }
-    arrowBody(cy: S * 0.578, toRight: true)
-    arrowBody(cy: S * 0.422, toRight: false)
+    arrow(cy: yTop, toRight: true)
+    arrow(cy: yBot, toRight: false)
 
     NSGraphicsContext.restoreGraphicsState()
     img.unlockFocus()
