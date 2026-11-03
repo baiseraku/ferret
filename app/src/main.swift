@@ -395,6 +395,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         window.makeKeyAndOrderFront(nil)
         window.orderFrontRegardless()
+        // 系统恢复窗口位置可能发生在启动之后，延迟再兜底一次
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+            let w = self.window
+            let onScreen = NSScreen.screens.contains { screen in
+                screen.visibleFrame.intersects(w.frame) && w.frame.origin.x >= screen.visibleFrame.minX - 20
+            }
+            if !onScreen, let main = NSScreen.main ?? NSScreen.screens.first {
+                let f = main.visibleFrame
+                w.setFrameOrigin(NSPoint(x: f.minX + 80, y: f.maxY - w.frame.height - 60))
+            }
+        }
         NSRunningApplication.current.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
         logView.string = "（本次会话日志从这里开始）\n"
         DispatchQueue.global().async {
