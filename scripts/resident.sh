@@ -12,7 +12,9 @@ PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 LOG="$ROOT/log/tunnel-resident-$HOST.log"
 UID_NUM="$(id -u)"
 
-[ -f "$ROOT/scripts/local.env" ] && . "$ROOT/scripts/local.env"
+for _f in "$ROOT/scripts/local.env" "$HOME/.config/ferret/local.env"; do
+  [ -f "$_f" ] && . "$_f" && break
+done
 
 say(){ printf '  %s\n' "$*"; }
 is_loaded() { /bin/launchctl print "gui/$UID_NUM/$LABEL" >/dev/null 2>&1; }
