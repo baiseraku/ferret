@@ -505,15 +505,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         serverPopup.selectItem(at: config.selected)
     }
 
-    func run(_ desc: String, _ cmd: String, done: (() -> Void)? = nil) {
-        guard !busy else { return }
+    func run(_ desc: String, _ cmd: String, timeout: TimeInterval = 120, done: (() -> Void)? = nil) {
+        guard !busy else { actionLabel.stringValue = "上一个操作还在进行，请稍候…"; return }
         busy = true
         actionLabel.stringValue = "\(desc)…"
+        appendRawHistory("点击：\(desc)")
         DispatchQueue.global().async {
-            let (_, out) = shell(cmd)
+            let (_, out) = shell(cmd, timeout: timeout)
             DispatchQueue.main.async {
-                self.actionLabel.stringValue = out.isEmpty ? "\(desc) 完成" : (out.split(separator: "\n").last.map(String.init) ?? "\(desc) 完成")
                 self.busy = false
+                self.actionLabel.stringValue = out.isEmpty ? "\(desc) 完成" : (out.split(separator: "\n").last.map(String.init) ?? "\(desc) 完成")
                 done?()
             }
         }
@@ -622,7 +623,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func onStart() { guard let s = current else { return }; touch(s, "启动"); run("启动隧道", "cd \(ROOT) && ./scripts/resident.sh start \(s.sshHost)") { self.refreshStatus() } }
     @objc func onStop() { guard let s = current else { return }; touch(s, "停止"); run("停止隧道", "cd \(ROOT) && ./scripts/resident.sh stop \(s.sshHost)") { self.refreshStatus() } }
     @objc func onRestart() { guard let s = current else { return }; touch(s, "重启"); run("重启隧道", "cd \(ROOT) && ./scripts/resident.sh stop \(s.sshHost); ./scripts/resident.sh start \(s.sshHost)") { self.refreshStatus() } }
-    @objc func onHeal() { guard let s = current else { return }; touch(s, "修复"); run("修复连接", "cd \(ROOT) && ./scripts/heal.sh heal") { self.refreshStatus(); self.refreshLog() } }
+    @objc func onHeal() {
+        guard let s = current else { return }
+        touch(s, "修复")
+        run("修复连接（清理残留会话并重启隧道）",
+            "cd \(ROOT) && ./scripts/heal.sh heal \(s.sshHost) \(s.probeHost)",
+            timeout: 220) { self.refreshStatus(); self.refreshLog() }
+    }
     @objc func onRefresh() { refreshStatus(); refreshLog() }
     // MARK: 整合「Codex 代理启动」：确保 Clash/magpie，并以 --proxy-server 启动 ChatGPT
     func portOpen(_ port: Int) -> Bool {
@@ -635,6 +642,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func showAlert(_ title: String, _ text: String) {
+        NSApp.activate(ignoringOtherApps: true)
         let a = NSAlert(); a.messageText = title; a.informativeText = text
         a.addButton(withTitle: "好"); a.runModal()
     }
@@ -655,9 +663,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func onLaunchChatGPT() {
-        guard !busy else { return }
-        busy = true
+        appendRawHistory("点击：启动 ChatGPT（代理模式）")
         actionLabel.stringValue = "检查 Clash / magpie…"
+        busy = true
         DispatchQueue.global().async {
             if !self.portOpen(LOCAL_PROXY_PORT) {
                 DispatchQueue.main.async {
@@ -692,13 +700,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     appendRawHistory("启动 ChatGPT（已在代理模式）")
                     return
                 }
-                let a = NSAlert()
-                a.messageText = pid.isEmpty ? "启动 ChatGPT（走 Clash 代理）？" : "ChatGPT 正在运行，但没有走代理"
-                a.informativeText = pid.isEmpty
-                    ? "将以 --proxy-server=127.0.0.1:7897 打开（模型走本机 magpie 3425，其余经 Clash）。"
-                    : "需要退出并重新打开一次，代理参数才会生效。"
-                a.addButton(withTitle: "继续"); a.addButton(withTitle: "取消")
-                guard a.runModal() == .alertFirstButtonReturn else { self.busy = false; return }
                 if !pid.isEmpty {
                     self.actionLabel.stringValue = "正在退出 ChatGPT…"
                     _ = shell("/usr/bin/osascript -e 'tell application id \"com.openai.codex\" to quit'", timeout: 20)
