@@ -547,6 +547,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         f.focusRingType = .none
         f.translatesAutoresizingMaskIntoConstraints = false
         f.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        let fw = f.widthAnchor.constraint(equalToConstant: 190); fw.priority = .defaultHigh; fw.isActive = true
         fields[key] = f
         return f
     }
@@ -764,11 +765,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         for (label, key) in [("显示名", "name"), ("SSH 隧道 Host", "sshHost"), ("探测 Host", "probeHost"),
                              ("SSH 主机名", "hostName"), ("SSH 端口", "port"), ("SSH 用户名", "userName"),
-                             ("私钥路径", "identityFile"), ("远端模型端口", "remoteModelPort"),
-                             ("远端代理端口", "remoteProxyPort"), ("本机 magpie 端口", "localMagpiePort"),
-                             ("本机 Clash 端口", "localClashPort")] {
+                             ("私钥路径", "identityFile")] {
             addRow(label, key)
         }
+        // 端口映射区：每行“远端 → 本机”，与 RemoteForward 一一对应
+        let mapTitle = NSTextField(labelWithString: "端口映射（远端 → 本机）")
+        mapTitle.font = .systemFont(ofSize: 11, weight: .medium)
+        mapTitle.textColor = .secondaryLabelColor
+        let mapStack = NSStackView()
+        mapStack.orientation = .vertical
+        mapStack.alignment = .leading
+        mapStack.spacing = 8
+        func mapRow(_ leftLabel: String, _ leftKey: String, _ rightLabel: String, _ rightKey: String) {
+            let row = NSStackView(); row.orientation = .horizontal; row.spacing = 10
+            let ll = NSTextField(labelWithString: leftLabel)
+            ll.font = .systemFont(ofSize: 11); ll.textColor = .secondaryLabelColor
+            ll.translatesAutoresizingMaskIntoConstraints = false
+            ll.widthAnchor.constraint(equalToConstant: 112).isActive = true
+            let lf = makeField(leftKey)
+            let arrow = NSTextField(labelWithString: "→")
+            arrow.font = .systemFont(ofSize: 13, weight: .semibold)
+            arrow.textColor = Theme.accent
+            let rl = NSTextField(labelWithString: rightLabel)
+            rl.font = .systemFont(ofSize: 11); rl.textColor = .secondaryLabelColor
+            rl.translatesAutoresizingMaskIntoConstraints = false
+            rl.widthAnchor.constraint(equalToConstant: 120).isActive = true
+            let rf = makeField(rightKey)
+            row.addArrangedSubview(ll); row.addArrangedSubview(lf)
+            row.addArrangedSubview(arrow)
+            row.addArrangedSubview(rl); row.addArrangedSubview(rf)
+            mapStack.addArrangedSubview(row)
+        }
+        mapRow("远端模型端口", "remoteModelPort", "本机 magpie 端口", "localMagpiePort")
+        mapRow("远端代理端口", "remoteProxyPort", "本机 Clash 端口", "localClashPort")
+
         let cfgOps = NSStackView(views: [
             pill("保存并重启", #selector(onSaveConfig), primary: true, height: 26),
             pill("只写 ssh config", #selector(onWriteSSHOnly), height: 26),
@@ -786,10 +816,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             cols.trailingAnchor.constraint(equalTo: configCard.trailingAnchor, constant: -14).isActive = true
             cols.topAnchor.constraint(equalTo: configCard.topAnchor, constant: 14).isActive = true
             colA.widthAnchor.constraint(equalTo: colB.widthAnchor).isActive = true
+
+            let mapAll = NSStackView(views: [mapTitle, mapStack])
+            mapAll.orientation = .vertical
+            mapAll.alignment = .leading
+            mapAll.spacing = 6
+            mapAll.translatesAutoresizingMaskIntoConstraints = false
+            configCard.addSubview(mapAll)
+            mapAll.leadingAnchor.constraint(equalTo: configCard.leadingAnchor, constant: 14).isActive = true
+            mapAll.topAnchor.constraint(equalTo: cols.bottomAnchor, constant: 12).isActive = true
+
             cfgOps.translatesAutoresizingMaskIntoConstraints = false
             configCard.addSubview(cfgOps)
             cfgOps.leadingAnchor.constraint(equalTo: configCard.leadingAnchor, constant: 14).isActive = true
-            cfgOps.topAnchor.constraint(equalTo: cols.bottomAnchor, constant: 12).isActive = true
+            cfgOps.topAnchor.constraint(equalTo: mapAll.bottomAnchor, constant: 12).isActive = true
             cfgOps.bottomAnchor.constraint(equalTo: configCard.bottomAnchor, constant: -14).isActive = true
         }
         NSLayoutConstraint.activate([
