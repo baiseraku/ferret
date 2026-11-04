@@ -1374,6 +1374,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func onRestartRemoteCodex() {
         guard let s = current else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "重启远端 codex？"
+        alert.informativeText = "会结束服务器上的 app-server，正在进行的对话/回合会被中断（之后需新建对话）。\n如果只是模型列表没刷新，可以等当前回合结束后再重启。"
+        alert.addButton(withTitle: "重启")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
         touch(s, "重启远端 codex")
         run("重启远端 codex",
             "cd \(ROOT) && ./scripts/restart-remote-codex.sh '\(s.probeHost)'",
