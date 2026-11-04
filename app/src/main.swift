@@ -708,8 +708,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         sidebar.addSubview(serverListStack)
 
         let addServerBtn = pill("＋ 添加服务器", #selector(onAddServer), height: 30)
-        let delServerBtn = pill("删除当前服务器", #selector(onRemoveServer), height: 30)
-        let sideBtns = NSStackView(views: [addServerBtn, delServerBtn])
+        let sideBtns = NSStackView(views: [addServerBtn])
         sideBtns.orientation = .vertical
         sideBtns.alignment = .leading
         sideBtns.spacing = 6
@@ -782,33 +781,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ])
 
         // 操作按钮
+        let moreMenu = NSPopUpButton(frame: .zero, pullsDown: true)
+        moreMenu.addItem(withTitle: "更多")
+        for (title, action) in [
+            ("修复连接", #selector(onHeal)),
+            ("复制日志", #selector(onCopyLog)),
+            ("打开日志目录", #selector(onOpenLogs)),
+            ("查看连接历史", #selector(onOpenHistory)),
+            ("清空连接历史", #selector(onClearHistory)),
+            ("—— 服务器 ——", nil as Selector?),
+            ("同步 skill/模型", #selector(onSyncToServer)),
+            ("重启远端 codex", #selector(onRestartRemoteCodex)),
+            ("检查服务器依赖", #selector(onCheckServerDeps)),
+            ("删除当前服务器", #selector(onRemoveServer)),
+        ] {
+            if let action = action {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                moreMenu.menu?.addItem(item)
+            } else {
+                moreMenu.menu?.addItem(NSMenuItem.separator())
+            }
+        }
+        moreMenu.font = .systemFont(ofSize: 12, weight: .medium)
+        moreMenu.bezelStyle = .rounded
+        moreMenu.controlSize = .regular
+        moreMenu.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            moreMenu.widthAnchor.constraint(equalToConstant: 86),
+            moreMenu.heightAnchor.constraint(equalToConstant: 28),
+        ])
+
         let actions = NSStackView(views: [
             pill("启动", #selector(onStart), primary: true),
             pill("停止", #selector(onStop)),
             pill("重启", #selector(onRestart)),
-            pill("修复连接", #selector(onHeal)),
             pill("刷新状态", #selector(onRefresh)),
-            pill("复制日志", #selector(onCopyLog)),
+            moreMenu,
         ])
         actions.orientation = .horizontal
         actions.spacing = 8
         actions.translatesAutoresizingMaskIntoConstraints = false
         main.addSubview(actions)
-
-        // 服务器侧操作（与隧道操作分开）
-        let serverLabel = NSTextField(labelWithString: "服务器：")
-        serverLabel.font = .systemFont(ofSize: 11)
-        serverLabel.textColor = .secondaryLabelColor
-        let serverOps = NSStackView(views: [
-            serverLabel,
-            pill("同步 skill/模型", #selector(onSyncToServer)),
-            pill("重启远端 codex", #selector(onRestartRemoteCodex)),
-            pill("检查服务器依赖", #selector(onCheckServerDeps)),
-        ])
-        serverOps.orientation = .horizontal
-        serverOps.spacing = 8
-        serverOps.translatesAutoresizingMaskIntoConstraints = false
-        main.addSubview(serverOps)
 
         // ChatGPT 代理卡片
         let chatCard = CardView(fill: Theme.cardBG, radius: 10)
@@ -829,7 +843,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chatCard.addSubview(chatBtn)
 
         NSLayoutConstraint.activate([
-            chatCard.topAnchor.constraint(equalTo: serverOps.bottomAnchor, constant: 14),
+            chatCard.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 14),
             chatCard.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
             chatCard.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -24),
             chatText.leadingAnchor.constraint(equalTo: chatCard.leadingAnchor, constant: 14),
@@ -1038,8 +1052,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             headerStack.trailingAnchor.constraint(lessThanOrEqualTo: statusPill.leadingAnchor, constant: -12),
             actions.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 16),
             actions.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
-            serverOps.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 10),
-            serverOps.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
             segmented.topAnchor.constraint(equalTo: chatCard.bottomAnchor, constant: 16),
             segmented.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
             host.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 10),
