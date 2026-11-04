@@ -789,12 +789,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pill("修复连接", #selector(onHeal)),
             pill("刷新状态", #selector(onRefresh)),
             pill("复制日志", #selector(onCopyLog)),
-            pill("同步 skill/模型", #selector(onSyncToServer)),
         ])
         actions.orientation = .horizontal
         actions.spacing = 8
         actions.translatesAutoresizingMaskIntoConstraints = false
         main.addSubview(actions)
+
+        // 服务器侧操作（与隧道操作分开）
+        let serverLabel = NSTextField(labelWithString: "服务器：")
+        serverLabel.font = .systemFont(ofSize: 11)
+        serverLabel.textColor = .secondaryLabelColor
+        let serverOps = NSStackView(views: [
+            serverLabel,
+            pill("同步 skill/模型", #selector(onSyncToServer)),
+            pill("重启远端 codex", #selector(onRestartRemoteCodex)),
+            pill("检查服务器依赖", #selector(onCheckServerDeps)),
+        ])
+        serverOps.orientation = .horizontal
+        serverOps.spacing = 8
+        serverOps.translatesAutoresizingMaskIntoConstraints = false
+        main.addSubview(serverOps)
 
         // ChatGPT 代理卡片
         let chatCard = CardView(fill: Theme.cardBG, radius: 10)
@@ -815,7 +829,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         chatCard.addSubview(chatBtn)
 
         NSLayoutConstraint.activate([
-            chatCard.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 16),
+            chatCard.topAnchor.constraint(equalTo: serverOps.bottomAnchor, constant: 14),
             chatCard.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
             chatCard.trailingAnchor.constraint(equalTo: main.trailingAnchor, constant: -24),
             chatText.leadingAnchor.constraint(equalTo: chatCard.leadingAnchor, constant: 14),
@@ -1024,6 +1038,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             headerStack.trailingAnchor.constraint(lessThanOrEqualTo: statusPill.leadingAnchor, constant: -12),
             actions.topAnchor.constraint(equalTo: headerStack.bottomAnchor, constant: 16),
             actions.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
+            serverOps.topAnchor.constraint(equalTo: actions.bottomAnchor, constant: 10),
+            serverOps.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
             segmented.topAnchor.constraint(equalTo: chatCard.bottomAnchor, constant: 16),
             segmented.leadingAnchor.constraint(equalTo: main.leadingAnchor, constant: 24),
             host.topAnchor.constraint(equalTo: segmented.bottomAnchor, constant: 10),
@@ -1342,6 +1358,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    @objc func onRestartRemoteCodex() {
+        guard let s = current else { return }
+        touch(s, "重启远端 codex")
+        run("重启远端 codex",
+            "cd \(ROOT) && ./scripts/restart-remote-codex.sh '\(s.probeHost)'",
+            timeout: 120)
     }
 
     @objc func onSyncToServer() {

@@ -136,7 +136,7 @@ verify
   echo "      已运行的远程工作区需要重连（或重启 app-server）才能看到新模型。"
   if [ "$RESTART_APP" = "1" ]; then
     echo "      正在重启服务器 app-server…"
-    "$SSH" "${SSHOPT[@]}" "$ALIAS" "pkill -f 'codex .*app-server' 2>/dev/null; sleep 1; echo '  已发送重启，桌面端重连后自动拉起新进程'" || rc=1
+    "$SSH" "${SSHOPT[@]}" "$ALIAS" "pkill -f '[c]odex .*app-server' 2>/dev/null; sleep 1; echo '  已发送重启，桌面端重连后自动拉起新进程'" || rc=1
   else
     echo "      可加 --restart-app-server 让脚本自动重启它。"
   fi
