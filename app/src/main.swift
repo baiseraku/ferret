@@ -513,6 +513,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let segmented = NSSegmentedControl(labels: ["隧道与日志", "远端分流监测", "服务器初始化说明"],
                                        trackingMode: .selectOne, target: nil, action: nil)
     var tabBoxes: [NSView] = []
+    var moreMenu: NSMenu?
     var lastOK = false
     var fields: [String: NSTextField] = [:]
     var busy = false
@@ -781,43 +782,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ])
 
         // 操作按钮
-        let moreMenu = NSPopUpButton(frame: .zero, pullsDown: true)
-        moreMenu.addItem(withTitle: "更多")
-        for (title, action) in [
-            ("修复连接", #selector(onHeal)),
-            ("复制日志", #selector(onCopyLog)),
-            ("打开日志目录", #selector(onOpenLogs)),
-            ("查看连接历史", #selector(onOpenHistory)),
-            ("清空连接历史", #selector(onClearHistory)),
-            ("—— 服务器 ——", nil as Selector?),
-            ("同步 skill/模型", #selector(onSyncToServer)),
-            ("重启远端 codex", #selector(onRestartRemoteCodex)),
-            ("检查服务器依赖", #selector(onCheckServerDeps)),
-            ("删除当前服务器", #selector(onRemoveServer)),
-        ] {
-            if let action = action {
-                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-                item.target = self
-                moreMenu.menu?.addItem(item)
-            } else {
-                moreMenu.menu?.addItem(NSMenuItem.separator())
-            }
-        }
-        moreMenu.font = .systemFont(ofSize: 12, weight: .medium)
-        moreMenu.bezelStyle = .rounded
-        moreMenu.controlSize = .regular
-        moreMenu.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            moreMenu.widthAnchor.constraint(equalToConstant: 86),
-            moreMenu.heightAnchor.constraint(equalToConstant: 28),
-        ])
+        // 「更多」用和普通按钮一致的自绘胶囊，点开二级菜单
+        let moreBtn = pill("更多 ▾", #selector(onMoreMenu(_:)))
+        moreBtn.widthAnchor.constraint(equalToConstant: 86).isActive = true
+        buildMoreMenu()
 
         let actions = NSStackView(views: [
             pill("启动", #selector(onStart), primary: true),
             pill("停止", #selector(onStop)),
             pill("重启", #selector(onRestart)),
             pill("刷新状态", #selector(onRefresh)),
-            moreMenu,
+            moreBtn,
         ])
         actions.orientation = .horizontal
         actions.spacing = 8
@@ -1370,6 +1345,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    func runAgentsSync(_ label: String, _ args: String) {
+        guard let s = current else { return }
+        touch(s, label)
+        run(label, "cd \(ROOT) && ./scripts/sync-to-server.sh \(args) --host '\(s.probeHost)'", timeout: 90)
+    }
+
+    @objc func onSyncAgents() { runAgentsSync("同步 AGENTS.md", "--agents") }
+
+    @objc func onPullAgents() { runAgentsSync("拉取 AGENTS.md", "--agents-pull") }
+
+    @objc func onForceSyncAgents() {
+        guard let s = current else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "强制用本机 AGENTS.md 覆盖服务器？"
+        a.informativeText = "会先备份服务器上的旧文件。注意：服务器版本的机器专属内容（如 --catalog 参数）会被覆盖。"
+        a.addButton(withTitle: "强制覆盖"); a.addButton(withTitle: "取消")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        touch(s, "强制同步 AGENTS.md")
+        run("强制同步 AGENTS.md", "cd \(ROOT) && ./scripts/sync-to-server.sh --agents --force --host '\(s.probeHost)'", timeout: 90)
+    }
+
+    func buildMoreMenu() {
+        let menu = NSMenu()
+        let entries: [(String, Selector?)] = [
+            ("修复连接", #selector(onHeal)),
+            ("复制日志", #selector(onCopyLog)),
+            ("打开日志目录", #selector(onOpenLogs)),
+            ("查看连接历史", #selector(onOpenHistory)),
+            ("清空连接历史", #selector(onClearHistory)),
+            ("", nil),
+            ("同步 skill/模型", #selector(onSyncToServer)),
+            ("同步 AGENTS.md → 服务器", #selector(onSyncAgents)),
+            ("从服务器拉取 AGENTS.md", #selector(onPullAgents)),
+            ("强制覆盖服务器 AGENTS.md", #selector(onForceSyncAgents)),
+            ("重启远端 codex", #selector(onRestartRemoteCodex)),
+            ("检查服务器依赖", #selector(onCheckServerDeps)),
+            ("", nil),
+            ("删除当前服务器", #selector(onRemoveServer)),
+        ]
+        for (title, action) in entries {
+            if let action = action {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                menu.addItem(item)
+            } else {
+                menu.addItem(NSMenuItem.separator())
+            }
+        }
+        moreMenu = menu
+    }
+
+    @objc func onMoreMenu(_ sender: NSButton) {
+        guard let menu = moreMenu else { return }
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: sender.bounds.height + 4),
+                   in: sender)
     }
 
     @objc func onRestartRemoteCodex() {

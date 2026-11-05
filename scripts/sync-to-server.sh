@@ -9,16 +9,19 @@ for _f in "$ROOT/scripts/local.env" "$HOME/.config/ferret/local.env"; do
   [ -f "$_f" ] && . "$_f" && break
 done
 ALIAS="${CODEX_PROBE_HOST:-my-server}"
-MODELS=0 MCP=0 SKILLS=0 RESTART_APP=0
+MODELS=0 MCP=0 SKILLS=0 RESTART_APP=0 AGENTS=0 AGENTS_PULL=0 FORCE=0
 [ $# -eq 0 ] && set -- --all
 while [ $# -gt 0 ]; do
   case "$1" in
     --models) MODELS=1 ;;
     --mcp) MCP=1 ;;
     --skills) SKILLS=1 ;;
-    --all) MODELS=1; MCP=1; SKILLS=1 ;;
+    --all) MODELS=1; MCP=1; SKILLS=1 ;;   # AGENTS.md 需显式 --agents
     --host) ALIAS=${2:?}; shift ;;
     --restart-app-server) RESTART_APP=1 ;;
+    --agents) AGENTS=1 ;;
+    --agents-pull) AGENTS_PULL=1 ;;
+    --force) FORCE=1 ;;
     -h|--help) sed -n '2,7p' "$0"; exit 0 ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
@@ -32,6 +35,56 @@ rc=0
 say() { printf '  %s\n' "$*"; }
 need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少 $1" >&2; exit 1; }; }
 need ssh; need scp; need tar
+
+sync_agents_push() {
+  echo "== AGENTS.md（本机 → 服务器）=="
+  local remote_home remote_user tmp
+  remote_home=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'echo $HOME' 2>/dev/null)
+  remote_user=$(basename "$remote_home")
+  if [ -z "$remote_home" ]; then echo "  读取远程 HOME 失败" >&2; rc=1; return; fi
+  tmp=$(mktemp)
+  "$SSH" "${SSHOPT[@]}" "$ALIAS" 'cat ~/.codex/AGENTS.md 2>/dev/null' > "$tmp" || true
+
+  # 路径归一化后比较，忽略本机/服务器 HOME 差异
+  if ! diff -q <(sed -e "s#/Users/[^/]*#__HOME__#g" "$HOME/.codex/AGENTS.md")                 <(sed -e "s#/home/[^/]*#__HOME__#g" "$tmp") >/dev/null 2>&1; then
+    if [ "$FORCE" != "1" ]; then
+      echo "  两份 AGENTS.md 存在路径之外的差异，未自动覆盖。差异摘要："
+      diff -u <(sed -e "s#/home/[^/]*#__HOME__#g" "$tmp")               <(sed -e "s#/Users/[^/]*#__HOME__#g" "$HOME/.codex/AGENTS.md") | sed -n '1,25p' | sed 's/^/    /'
+      echo "  合并后重试；或加 --force 强制用本机版本覆盖（会先备份远端）。"
+      rc=1; rm -f "$tmp"; return
+    fi
+    echo "  --force：用本机版本覆盖"
+  fi
+
+  # 生成远端版本：把本机 HOME 换成远端 HOME
+  sed -e "s#/Users/$USER#${remote_home}#g" "$HOME/.codex/AGENTS.md" > "$tmp.new"
+  "$SSH" "${SSHOPT[@]}" "$ALIAS" 'cp ~/.codex/AGENTS.md ~/.codex/AGENTS.md.bak-$(date +%Y%m%d-%H%M%S) 2>/dev/null || true'
+  "$SCP" -q "${SSHOPT[@]}" "$tmp.new" "$ALIAS:.codex/AGENTS.md" || { rc=1; return; }
+  local a b
+  a=$(md5 -q "$tmp.new" 2>/dev/null || md5sum "$tmp.new" | cut -d' ' -f1)
+  b=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'md5sum ~/.codex/AGENTS.md | cut -d" " -f1' 2>/dev/null)
+  say "已推送 $(wc -l < "$tmp.new" | tr -d ' ') 行（$( [ "$a" = "$b" ] && echo 校验一致 || echo "校验不一致 $a/$b" )）"
+  rm -f "$tmp" "$tmp.new"
+}
+
+sync_agents_pull() {
+  echo "== AGENTS.md（服务器 → 本机）=="
+  local remote_home tmp
+  remote_home=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'echo $HOME' 2>/dev/null)
+  tmp=$(mktemp)
+  "$SSH" "${SSHOPT[@]}" "$ALIAS" 'cat ~/.codex/AGENTS.md 2>/dev/null' > "$tmp" || true
+  if [ ! -s "$tmp" ]; then echo "  服务器没有 AGENTS.md" >&2; rc=1; return; fi
+  sed -e "s#${remote_home}#/Users/$USER#g" "$tmp" > "$tmp.new"
+  if ! diff -q "$HOME/.codex/AGENTS.md" "$tmp.new" >/dev/null 2>&1 && [ "$FORCE" != "1" ] && [ -f "$HOME/.codex/AGENTS.md" ]; then
+    echo "  本机 AGENTS.md 将发生变化，差异摘要："
+    diff -u "$HOME/.codex/AGENTS.md" "$tmp.new" | sed -n '1,25p' | sed 's/^/    /'
+  fi
+  cp "$HOME/.codex/AGENTS.md" "$HOME/.codex/AGENTS.md.bak-$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+  cp "$tmp.new" "$HOME/.codex/AGENTS.md"
+  say "已拉取 $(wc -l < "$HOME/.codex/AGENTS.md" | tr -d ' ') 行（本机旧版已备份）"
+  rm -f "$tmp" "$tmp.new"
+}
+
 [ -f "$HOME/.codex/magpie-models.json" ] || { echo "找不到 $HOME/.codex/magpie-models.json（magpie 是否在跑？）" >&2; exit 1; }
 
 sync_models() {
@@ -130,7 +183,10 @@ REMOTE
 [ "$MCP" = 1 ] && sync_mcp
 [ "$SKILLS" = 1 ] && sync_skills
 verify
-[ $rc -eq 0 ] && if [ "${MODELS_CHANGED:-0}" = "1" ]; then
+[ $rc -eq 0 ] && if [ "$AGENTS" = "1" ]; then sync_agents_push; fi
+if [ "$AGENTS_PULL" = "1" ]; then sync_agents_pull; fi
+
+if [ "${MODELS_CHANGED:-0}" = "1" ]; then
   echo
   echo "提示：服务器上常驻的 codex app-server 在启动时读取模型清单。"
   echo "      已运行的远程工作区需要重连（或重启 app-server）才能看到新模型。"
@@ -141,6 +197,7 @@ verify
     echo "      可加 --restart-app-server 让脚本自动重启它。"
   fi
 fi
+
 
 echo "完成" || echo "有步骤失败，见上" >&2
 exit $rc
