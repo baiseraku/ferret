@@ -158,21 +158,49 @@ PY
 
 sync_skills() {
   echo "== skills =="
-  # 本机 ~/.agents/skills 里是符号链接 → 用 -h 解引用，打包真实内容；只写服务器 ~/.codex/skills
+  # 源：本机 Codex 实际读取的 ~/.agents/skills（符号链接需解引用）
+  # 目标：服务器 ~/.codex/skills —— 保持与本机一致，多的删除（.system 保留）
   local src="$HOME/.agents/skills"
   [ -d "$src" ] || src="$HOME/.config/magpie/library/skills"
   [ -d "$src" ] || { echo "  找不到 ~/.agents/skills 或 magpie library" >&2; rc=1; return; }
-  local n tmp; n=$(find -L "$src" -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
+
+  local keep tmp
+  keep=$(cd "$src" && find -L . -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null \
+         | grep -vE '^\.(git|DS_Store)$' | sort | paste -sd, -)
   tmp=$(mktemp)
   COPYFILE_DISABLE=1 tar czhf "$tmp" --no-mac-metadata --no-xattrs \
-      --exclude '.DS_Store' --exclude '.git' --exclude 'node_modules' --exclude '__pycache__' \
+      --exclude '.DS_Store' --exclude '.git' --exclude 'node_modules' --exclude '__pycache__' --exclude '._*' \
       -C "$src" . 2>/dev/null || { rc=1; rm -f "$tmp"; return; }
   "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$ALIAS" \
     "mkdir -p ~/.codex/skills && tar --warning=no-unknown-keyword --overwrite -xzf - -C ~/.codex/skills" < "$tmp" \
     || { echo "  写入 ~/.codex/skills 失败" >&2; rc=1; }
   rm -f "$tmp"
-  local got; got=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'find ~/.codex/skills -maxdepth 2 -name SKILL.md | wc -l' 2>/dev/null)
-  say "已同步 $n 个 skill（服务器现有 ${got:-?} 个）→ ~/.codex/skills"
+
+  # 清掉 macOS 产生的 AppleDouble 文件
+  "$SSH" "${SSHOPT[@]}" "$ALIAS" "find ~/.codex/skills -maxdepth 1 -name '._*' -delete 2>/dev/null || true" || true
+
+  # 删除服务器上本机没有的技能目录（保留 .system）
+  local removed
+  removed=$("$SSH" "${SSHOPT[@]}" "$ALIAS" "KEEP='$keep' python3 -" <<'REMOTE_PY' 2>/dev/null
+import os, shutil
+base = os.path.expanduser('~/.codex/skills')
+keep = set(x for x in os.environ.get('KEEP', '').split(',') if x)
+removed = []
+for n in sorted(os.listdir(base)):
+    p = os.path.join(base, n)
+    if n == '.system' or not os.path.isdir(p) or os.path.islink(p):
+        continue
+    if n not in keep:
+        shutil.rmtree(p)
+        removed.append(n)
+print(','.join(removed))
+REMOTE_PY
+)
+  local n; n=$(printf '%s' "$keep" | tr ',' '\n' | grep -c .)
+  if [ -n "$removed" ]; then
+    say "已删除服务器多余技能: $(printf '%s' "$removed" | tr ',' ' ')"
+  fi
+  say "已同步 $n 个 skill → ~/.codex/skills（与本机一致，.system 保留）"
 }
 
 verify() {
