@@ -158,12 +158,18 @@ PY
 
 sync_skills() {
   echo "== skills =="
-  local src="$HOME/.config/magpie/library/skills"
-  [ -d "$src" ] || { echo "  找不到 $src" >&2; rc=1; return; }
-  local n; n=$(ls -1 "$src" | wc -l | tr -d ' ')
-  tar czf - -C "$src" --exclude '.DS_Store' . 2>/dev/null \
-    | "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$ALIAS" 'tar xzf - -C ~/.codex/skills 2>/dev/null' || { rc=1; return; }
-  say "已同步 $n 个 skill → ~/.codex/skills（保留服务器 .system）"
+  local src="$HOME/.agents/skills"
+  [ -d "$src" ] || src="$HOME/.config/magpie/library/skills"
+  [ -d "$src" ] || { echo "  找不到 ~/.agents/skills 或 magpie library" >&2; rc=1; return; }
+  local n tmp; n=$(ls -1 "$src" | wc -l | tr -d ' ')
+  tmp=$(mktemp)
+  COPYFILE_DISABLE=1 tar czf "$tmp" --no-mac-metadata -C "$src" --exclude '.DS_Store' . 2>/dev/null || { rc=1; rm -f "$tmp"; return; }
+  for dest in "~/.agents/skills" "~/.codex/skills"; do
+    "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$ALIAS" \
+      "mkdir -p $dest && tar xzf - -C $dest 2>/dev/null" < "$tmp" || { echo "  写入 $dest 失败" >&2; rc=1; }
+  done
+  rm -f "$tmp"
+  say "已同步 $n 个 skill → 服务器 ~/.agents/skills 与 ~/.codex/skills（保留服务器已有项）"
 }
 
 verify() {
