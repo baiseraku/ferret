@@ -158,18 +158,21 @@ PY
 
 sync_skills() {
   echo "== skills =="
+  # 本机 ~/.agents/skills 里是符号链接 → 用 -h 解引用，打包真实内容；只写服务器 ~/.codex/skills
   local src="$HOME/.agents/skills"
   [ -d "$src" ] || src="$HOME/.config/magpie/library/skills"
   [ -d "$src" ] || { echo "  找不到 ~/.agents/skills 或 magpie library" >&2; rc=1; return; }
-  local n tmp; n=$(ls -1 "$src" | wc -l | tr -d ' ')
+  local n tmp; n=$(find -L "$src" -maxdepth 2 -name SKILL.md 2>/dev/null | wc -l | tr -d ' ')
   tmp=$(mktemp)
-  COPYFILE_DISABLE=1 tar czf "$tmp" --no-mac-metadata -C "$src" --exclude '.DS_Store' . 2>/dev/null || { rc=1; rm -f "$tmp"; return; }
-  for dest in "~/.agents/skills" "~/.codex/skills"; do
-    "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$ALIAS" \
-      "mkdir -p $dest && tar xzf - -C $dest 2>/dev/null" < "$tmp" || { echo "  写入 $dest 失败" >&2; rc=1; }
-  done
+  COPYFILE_DISABLE=1 tar czhf "$tmp" --no-mac-metadata --no-xattrs \
+      --exclude '.DS_Store' --exclude '.git' --exclude 'node_modules' --exclude '__pycache__' \
+      -C "$src" . 2>/dev/null || { rc=1; rm -f "$tmp"; return; }
+  "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$ALIAS" \
+    "mkdir -p ~/.codex/skills && tar --warning=no-unknown-keyword --overwrite -xzf - -C ~/.codex/skills" < "$tmp" \
+    || { echo "  写入 ~/.codex/skills 失败" >&2; rc=1; }
   rm -f "$tmp"
-  say "已同步 $n 个 skill → 服务器 ~/.agents/skills 与 ~/.codex/skills（保留服务器已有项）"
+  local got; got=$("$SSH" "${SSHOPT[@]}" "$ALIAS" 'find ~/.codex/skills -maxdepth 2 -name SKILL.md | wc -l' 2>/dev/null)
+  say "已同步 $n 个 skill（服务器现有 ${got:-?} 个）→ ~/.codex/skills"
 }
 
 verify() {
