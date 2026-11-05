@@ -1382,7 +1382,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ("同步 AGENTS.md → 服务器", #selector(onSyncAgents)),
             ("从服务器拉取 AGENTS.md", #selector(onPullAgents)),
             ("强制覆盖服务器 AGENTS.md", #selector(onForceSyncAgents)),
-            ("重启远端 codex", #selector(onRestartRemoteCodex)),
+            ("重启远端 app-server", #selector(onRestartRemoteCodex)),
+            ("重启本机 app-server", #selector(onRestartLocalAppServer)),
             ("检查服务器依赖", #selector(onCheckServerDeps)),
             ("", nil),
             ("删除当前服务器", #selector(onRemoveServer)),
@@ -1404,6 +1405,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: sender.bounds.height + 4),
                    in: sender)
+    }
+
+    @objc func onRestartLocalAppServer() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "重启本机 app-server？"
+        alert.informativeText = "会结束 Mac 上的 codex app-server，本机正在进行的对话/回合会被中断。\n只影响本机，不影响服务器上的远程工作区。"
+        alert.addButton(withTitle: "重启")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        run("重启本机 app-server",
+            "cd \(ROOT) && ./scripts/restart-local-app-server.sh",
+            timeout: 60)
     }
 
     @objc func onRestartRemoteCodex() {
