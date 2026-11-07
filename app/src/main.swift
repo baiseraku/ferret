@@ -1,3 +1,4 @@
+import Darwin
 import Cocoa
 
 let ROOT = ProcessInfo.processInfo.environment["FERRET_ROOT"]
@@ -95,11 +96,55 @@ func shell(_ command: String, timeout: TimeInterval = 120) -> (Int32, String) {
     p.standardOutput = out
     p.standardError = out
     do { try p.run() } catch { return (-1, "启动失败: \(error)") }
-    let deadline = Date().addingTimeInterval(timeout)
+    // 父进程关闭写端，否则子进程退出后也拿不到 EOF
+    out.fileHandleForWriting.closeFile()
+
+    let limit = max(1, timeout)
+    let deadline = Date().addingTimeInterval(limit)
     while p.isRunning && Date() < deadline { usleep(50_000) }
-    if p.isRunning { p.terminate() }
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+
+    var timedOut = false
+    if p.isRunning {
+        timedOut = true
+        p.terminate()
+        let grace = Date().addingTimeInterval(2)
+        while p.isRunning && Date() < grace { usleep(50_000) }
+        if p.isRunning {
+            kill(-p.processIdentifier, SIGKILL)   // 连同子进程（ssh 等）一起结束
+            kill(p.processIdentifier, SIGKILL)
+            let hard = Date().addingTimeInterval(2)
+            while p.isRunning && Date() < hard { usleep(50_000) }
+        }
+    }
+
+    // 非阻塞读，避免残留子进程握住管道导致永久卡死
+    let fd = out.fileHandleForReading.fileDescriptor
+    let flags = fcntl(fd, F_GETFL)
+    _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+    var data = Data()
+    let readDeadline = Date().addingTimeInterval(3)
+    var buf = [UInt8](repeating: 0, count: 65536)
+    while Date() < readDeadline {
+        let n = read(fd, &buf, buf.count)
+        if n > 0 {
+            data.append(buf, count: n)
+        } else if n == 0 {
+            break
+        } else if errno != EAGAIN && errno != EWOULDBLOCK {
+            break
+        } else {
+            usleep(20_000)
+        }
+    }
+    try? out.fileHandleForReading.close()
+
+    // 只有确认已退出才读 terminationStatus：否则 NSConcreteTask 会抛 ObjC 异常，整个 app abort
+    var status: Int32 = -1
+    if !p.isRunning {
+        status = p.terminationStatus
+    }
+    let text = (String(data: data, encoding: .utf8) ?? "") + (timedOut ? "\n(shell 超时 \(Int(limit))s，已终止)" : "")
+    return (status, text)
 }
 
 func sshConfigValues(_ host: String) -> (hostName: String, port: Int, user: String, identity: String)? {
