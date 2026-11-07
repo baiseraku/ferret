@@ -31,6 +31,7 @@ struct SavedServer: Codable {
 struct AppConfig: Codable {
     var servers: [SavedServer] = []
     var selected: Int = 0
+    var compression: [String: Bool]? = nil   // 每个连接是否开启 SSH 压缩（key = sshHost）
 }
 
 struct LegacyConfig: Codable {
@@ -208,8 +209,9 @@ func blockMarkers(_ host: String) -> (String, String) {
     ("# >>> ferret-app \(host)", "# <<< ferret-app \(host)")
 }
 
-func sshBlock(_ s: SavedServer) -> String {
+func sshBlock(_ s: SavedServer, compression: Bool) -> String {
     let (b, e) = blockMarkers(s.sshHost)
+    let compLine = compression ? "  Compression yes\n" : ""
     return """
     \(b)
     Host \(s.sshHost)
@@ -226,11 +228,28 @@ func sshBlock(_ s: SavedServer) -> String {
       ControlPath none
       ServerAliveInterval 15
       ServerAliveCountMax 3
-    \(e)
+    \(compLine)\(e)
     """
 }
 
-func writeSSHBlock(_ s: SavedServer) -> String {
+func compressionFromSSHConfig(_ host: String) -> Bool {
+    guard let text = try? String(contentsOfFile: SSH_CONFIG, encoding: .utf8) else { return false }
+    var inside = false
+    for raw in text.components(separatedBy: "\n") {
+        let line = raw.trimmingCharacters(in: .whitespaces)
+        if line.hasPrefix("#") { continue }
+        if line.hasPrefix("Host ") {
+            inside = line.dropFirst(5).split(separator: " ").map(String.init).contains(host)
+            continue
+        }
+        if inside, line.lowercased().hasPrefix("compression") {
+            return line.lowercased().contains("yes")
+        }
+    }
+    return false
+}
+
+func writeSSHBlock(_ s: SavedServer, compression: Bool) -> String {
     if s.hostName.isEmpty { return "请先填写「SSH 主机名」再保存（不会写占位符覆盖现有配置）" }
     if s.userName.isEmpty { return "请先填写「SSH 用户名」再保存" }
     guard var text = try? String(contentsOfFile: SSH_CONFIG, encoding: .utf8) else { return "读不到 \(SSH_CONFIG)" }
@@ -253,7 +272,7 @@ func writeSSHBlock(_ s: SavedServer) -> String {
         }
         if !skipping { kept.append(line) }
     }
-    text = kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + sshBlock(s) + "\n"
+    text = kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + sshBlock(s, compression: compression) + "\n"
     do { try text.write(toFile: SSH_CONFIG, atomically: true, encoding: .utf8); return "" }
     catch { return "写入失败: \(error)" }
 }
@@ -562,6 +581,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastOK = false
     var lastStatusDetail = ""
     var healthInFlight = false
+    var compressionCheck: NSButton?
     var statusTimer: Timer?
     var fields: [String: NSTextField] = [:]
     var busy = false
@@ -959,9 +979,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         mapRow("远端模型端口", "remoteModelPort", "本机 magpie 端口", "localMagpiePort")
         mapRow("远端代理端口", "remoteProxyPort", "本机 Clash 端口", "localClashPort")
 
+        let compCheck = NSButton(checkboxWithTitle: "SSH 压缩 Compression yes",
+                                 target: self, action: #selector(onToggleCompression))
+        compCheck.font = .systemFont(ofSize: 11)
+        compressionCheck = compCheck
         let cfgOps = NSStackView(views: [
             pill("保存并重启", #selector(onSaveConfig), primary: true, height: 26),
             pill("只写 ssh config", #selector(onWriteSSHOnly), height: 26),
+            compCheck,
         ])
         cfgOps.orientation = .horizontal
         cfgOps.spacing = 8
@@ -1126,6 +1151,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fields["remoteProxyPort"]?.stringValue = "\(s?.remoteProxyPort ?? 58922)"
         fields["localMagpiePort"]?.stringValue = "\(s?.localMagpiePort ?? 3425)"
         fields["localClashPort"]?.stringValue = "\(s?.localClashPort ?? 7897)"
+        compressionCheck?.state = (s.map { compressionEnabled($0.sshHost) } ?? false) ? .on : .off
         setupView.string = s.map { serverSetupText($0) } ?? "（先添加一台服务器）"
         refreshLog()
     }
@@ -1349,7 +1375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let s = SavedServer(name: name, sshHost: sshF.stringValue, probeHost: probeF.stringValue.isEmpty ? sshF.stringValue : probeF.stringValue)
         config.servers.append(s); config.selected = config.servers.count - 1
         saveConfig(config)
-        let err = writeSSHBlock(s)
+        let err = writeSSHBlock(s, compression: compressionEnabled(s.sshHost))
         actionLabel.stringValue = err.isEmpty ? "已添加 \(s.name)；记得在服务器上装好 magpie/mihomo，再点启动" : err
         touch(s, "添加"); refreshStatus()
     }
@@ -1562,6 +1588,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             timeout: 120)
     }
 
+    func compressionEnabled(_ host: String) -> Bool {
+        if let v = config.compression?[host] { return v }
+        return compressionFromSSHConfig(host)
+    }
+
+    @objc func onToggleCompression(_ sender: NSButton) {
+        guard let s = current else { return }
+        var dict = config.compression ?? [:]
+        dict[s.sshHost] = (sender.state == .on)
+        config.compression = dict
+        saveConfig(config)
+        actionLabel.stringValue = (sender.state == .on ? "已开启压缩" : "已关闭压缩") + "，点「保存并重启」后生效"
+    }
+
     @objc func onSyncToServer() {
         guard let s = current else { return }
         touch(s, "同步 skill/模型")
@@ -1596,7 +1636,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func onWriteSSHOnly() {
         guard let s = currentFromFields() else { return }
-        let err = writeSSHBlock(s)
+        let err = writeSSHBlock(s, compression: compressionEnabled(s.sshHost))
         if err.isEmpty {
             if let i = config.servers.firstIndex(where: { $0.sshHost == s.sshHost }) { config.servers[i] = s } else { config.servers.append(s) }
             saveConfig(config); reloadServerUI(); actionLabel.stringValue = "已写入 ssh config（未重启）"
@@ -1606,7 +1646,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func onSaveConfig() {
         guard let s = currentFromFields() else { return }
         let old = current
-        let err = writeSSHBlock(s)
+        let err = writeSSHBlock(s, compression: compressionEnabled(s.sshHost))
         if !err.isEmpty { actionLabel.stringValue = err; return }
         if let i = config.servers.firstIndex(where: { $0.sshHost == old?.sshHost ?? s.sshHost }) { config.servers[i] = s } else { config.servers.append(s) }
         saveConfig(config); reloadServerUI()
