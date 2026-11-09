@@ -58,9 +58,44 @@ say() { printf '  %s\n' "$*"; }
 remote_home=$("$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes "$ALIAS" 'echo $HOME' 2>/dev/null || true)
 if [ -z "$remote_home" ]; then
   echo '{"error":"ssh"}'
-  echo "连不上服务器（$ALIAS）" >&2
+  echo "连不上服务器（${ALIAS}）" >&2
   exit 1
 fi
+
+# ---------- AGENTS.md 路径安全约束 ----------
+is_under() { case "$1" in "$2"/*) return 0 ;; *) return 1 ;; esac; }
+in_git_repo() {
+  local d; d=$(dirname "$1")
+  while [ "$d" != "/" ] && [ -n "$d" ]; do
+    [ -d "$d/.git" ] && return 0
+    d=$(dirname "$d")
+  done
+  return 1
+}
+# 校验本机 AGENTS.md 目标/来源：只允许 ~/.codex 下，且在 git 项目内则拒绝
+check_agents_local() {
+  local label="$1" raw="$2" p
+  p=$(expand_local "$raw")
+  case "$p" in */AGENTS.md) : ;; *) echo "拒绝写入 ${label}：路径必须以 /AGENTS.md 结尾（${raw}）" >&2; return 1 ;; esac
+  if ! is_under "$p" "$HOME/.codex"; then
+    echo "拒绝写入 ${label}：只允许放在 ~/.codex 下，避免污染项目目录（${raw}）" >&2; return 1
+  fi
+  if in_git_repo "$p"; then
+    echo "拒绝写入 ${label}：$p 位于 git 项目内" >&2; return 1
+  fi
+  return 0
+}
+# 校验服务器目标：只允许在 ~/.codex 下
+check_agents_remote() {
+  local label="$1" raw="$2" p
+  p=$(expand_remote "$raw")
+  case "$p" in */AGENTS.md) : ;; *) echo "拒绝写入 ${label}：路径必须以 /AGENTS.md 结尾（${raw}）" >&2; return 1 ;; esac
+  if ! is_under "$p" "$remote_home/.codex"; then
+    echo "拒绝写入 ${label}：只允许放在服务器 ~/.codex 下（${raw}）" >&2; return 1
+  fi
+  return 0
+}
+
 expand_remote() { case "$1" in "~/"*) printf '%s/%s' "$remote_home" "${1#\~/}" ;; *) printf '%s' "$1" ;; esac; }
 
 # ---------- skills ----------
@@ -132,6 +167,8 @@ norm() { sed -e "s#/Users/[^/]*#__HOME__#g" -e "s#/home/[^/]*#__HOME__#g" "$1"; 
 
 sync_agents_push() {
   echo "== AGENTS.md（本机 → 服务器）=="
+  check_agents_local "本机来源" "$AGENTS_SRC" || { rc=1; return; }
+  check_agents_remote "服务器目标" "$AGENTS_DEST" || { rc=1; return; }
   local src="$AGENTS_SRC" dest; dest=$(expand_remote "$AGENTS_DEST")
   [ -f "$src" ] || { echo "  找不到来源文件: $src" >&2; rc=1; return; }
   local tmp; tmp=$(mktemp)
@@ -145,7 +182,7 @@ sync_agents_push() {
     fi
   fi
   sed -e "s#/Users/$USER#${remote_home}#g" "$src" > "$tmp.new"
-  "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes "$ALIAS" "cp '$dest' '$dest.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true" || true
+  "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes "$ALIAS" "mkdir -p \"$(dirname "$dest")\"; cp '$dest' '$dest.bak-$(date +%Y%m%d-%H%M%S)' 2>/dev/null || true" || true
   "$SCP" -q "${SSHOPT[@]}" "$tmp.new" "$ALIAS:$dest" || { echo "  上传失败" >&2; rc=1; }
   say "已同步 AGENTS.md → $AGENTS_DEST"
   rm -f "$tmp" "$tmp.new"
@@ -153,6 +190,8 @@ sync_agents_push() {
 
 sync_agents_pull() {
   echo "== AGENTS.md（服务器 → 本机）=="
+  check_agents_local "本机目标" "$AGENTS_SRC" || { rc=1; return; }
+  check_agents_remote "服务器来源" "$AGENTS_DEST" || { rc=1; return; }
   local src="$AGENTS_SRC" dest; dest=$(expand_remote "$AGENTS_DEST")
   local tmp; tmp=$(mktemp)
   "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes "$ALIAS" "cat '$dest' 2>/dev/null" > "$tmp" || true
