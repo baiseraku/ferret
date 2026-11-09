@@ -28,10 +28,21 @@ struct SavedServer: Codable {
     var lastUsed: Double = 0
 }
 
+struct SyncPaths: Codable {
+    var skillsSrc: String = "~/.agents/skills"
+    var skillsDest: String = "~/.codex/skills"
+    var modelsSrc: String = "~/.codex/magpie-models.json"
+    var modelsDest: String = "~/.codex/magpie-models.json"
+    var agentsSrc: String = "~/.codex/AGENTS.md"
+    var agentsDest: String = "~/.codex/AGENTS.md"
+    var mirror: Bool = true
+}
+
 struct AppConfig: Codable {
     var servers: [SavedServer] = []
     var selected: Int = 0
     var compression: [String: Bool]? = nil   // 每个连接是否开启 SSH 压缩（key = sshHost）
+    var syncPaths: SyncPaths? = nil           // skills / 模型 / AGENTS.md 的同步来源与目标
 }
 
 struct LegacyConfig: Codable {
@@ -574,7 +585,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let logView = NSTextView()
     let reportView = NSTextView()
     let setupView = NSTextView()
-    let segmented = NSSegmentedControl(labels: ["隧道与日志", "远端分流监测", "服务器初始化说明"],
+    let segmented = NSSegmentedControl(labels: ["隧道与日志", "远端分流监测", "服务器初始化说明", "同步"],
                                        trackingMode: .selectOne, target: nil, action: nil)
     var tabBoxes: [NSView] = []
     var moreMenu: NSMenu?
@@ -582,6 +593,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var lastStatusDetail = ""
     var healthInFlight = false
     var compressionCheck: NSButton?
+    var syncFields: [String: NSTextField] = [:]
+    var syncMirrorCheck: NSButton?
     var statusTimer: Timer?
     var fields: [String: NSTextField] = [:]
     var busy = false
@@ -1080,7 +1093,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             setupScroll.bottomAnchor.constraint(equalTo: box3.bottomAnchor),
         ])
 
-        tabBoxes = [box1, box2, box3]
+        // Tab 4：同步（来源/目标可自定义）
+        let box4 = NSView(); box4.translatesAutoresizingMaskIntoConstraints = false
+        let syncStack = NSStackView()
+        syncStack.orientation = .vertical
+        syncStack.alignment = .leading
+        syncStack.spacing = 8
+        syncStack.translatesAutoresizingMaskIntoConstraints = false
+        box4.addSubview(syncStack)
+        NSLayoutConstraint.activate([
+            syncStack.topAnchor.constraint(equalTo: box4.topAnchor),
+            syncStack.leadingAnchor.constraint(equalTo: box4.leadingAnchor),
+            syncStack.trailingAnchor.constraint(equalTo: box4.trailingAnchor),
+        ])
+        let syncBottom = syncStack.bottomAnchor.constraint(lessThanOrEqualTo: box4.bottomAnchor)
+        syncBottom.priority = .defaultHigh
+        syncBottom.isActive = true
+
+        func syncField(_ key: String, _ placeholder: String) -> NSTextField {
+            let f = NSTextField(string: "")
+            f.placeholderString = placeholder
+            f.font = .systemFont(ofSize: 12)
+            f.isBezeled = false
+            f.drawsBackground = true
+            f.backgroundColor = Theme.fieldBG
+            f.wantsLayer = true
+            f.layer?.cornerRadius = 6
+            f.focusRingType = .none
+            f.translatesAutoresizingMaskIntoConstraints = false
+            f.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            syncFields[key] = f
+            return f
+        }
+
+        func syncCard(_ title: String, _ srcKey: String, _ destKey: String, buttons: [NSView]) -> NSView {
+            let card = CardView(fill: Theme.windowBG, radius: 8)
+            card.translatesAutoresizingMaskIntoConstraints = false
+            let stack = NSStackView()
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 6
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview(stack)
+            NSLayoutConstraint.activate([
+                stack.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+                stack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 12),
+                stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
+                stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
+            ])
+            let t = NSTextField(labelWithString: title)
+            t.font = .systemFont(ofSize: 13, weight: .semibold)
+            stack.addArrangedSubview(t)
+
+            func pathRow(_ caption: String, _ key: String) -> NSStackView {
+                let row = NSStackView(); row.orientation = .horizontal; row.spacing = 8
+                let l = NSTextField(labelWithString: caption)
+                l.font = .systemFont(ofSize: 11); l.textColor = .secondaryLabelColor
+                l.translatesAutoresizingMaskIntoConstraints = false
+                l.widthAnchor.constraint(equalToConstant: 36).isActive = true
+                let f = syncField(key, "路径")
+                row.addArrangedSubview(l); row.addArrangedSubview(f)
+                f.widthAnchor.constraint(equalTo: row.widthAnchor, constant: -44).isActive = true
+                return row
+            }
+            let srcRow = pathRow("来源", srcKey)
+            stack.addArrangedSubview(srcRow)
+            srcRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            let destRow = pathRow("目标", destKey)
+            stack.addArrangedSubview(destRow)
+            destRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            let br = NSStackView(views: buttons)
+            br.orientation = .horizontal
+            br.spacing = 8
+            stack.addArrangedSubview(br)
+            return card
+        }
+
+        let skillsMirror = NSButton(checkboxWithTitle: "镜像：删除服务器多余技能",
+                                    target: nil, action: nil)
+        skillsMirror.font = .systemFont(ofSize: 11)
+        syncMirrorCheck = skillsMirror
+
+        let skillsCard = syncCard("Skills", "skillsSrc", "skillsDest", buttons: [
+            pill("同步 Skills", #selector(onSyncSkills), primary: true, height: 26), skillsMirror,
+        ])
+        let modelsCard = syncCard("模型目录", "modelsSrc", "modelsDest", buttons: [
+            pill("同步模型", #selector(onSyncModels), primary: true, height: 26),
+        ])
+        let agentsCard = syncCard("AGENTS.md", "agentsSrc", "agentsDest", buttons: [
+            pill("同步到服务器", #selector(onSyncAgents), primary: true, height: 26),
+            pill("从服务器拉取", #selector(onPullAgents), height: 26),
+            pill("强制覆盖", #selector(onForceSyncAgents), height: 26),
+        ])
+        for card in [skillsCard, modelsCard, agentsCard] {
+            syncStack.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: syncStack.widthAnchor).isActive = true
+        }
+        let depRow = NSStackView(views: [pill("检查服务器依赖", #selector(onCheckServerDeps), height: 26)])
+        depRow.orientation = .horizontal
+        syncStack.addArrangedSubview(depRow)
+        tabBoxes.append(box4)
+
+        tabBoxes = [box1, box2, box3, box4]
         for b in tabBoxes {
             b.translatesAutoresizingMaskIntoConstraints = false
             host.addSubview(b)
@@ -1151,6 +1265,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         fields["remoteProxyPort"]?.stringValue = "\(s?.remoteProxyPort ?? 58922)"
         fields["localMagpiePort"]?.stringValue = "\(s?.localMagpiePort ?? 3425)"
         fields["localClashPort"]?.stringValue = "\(s?.localClashPort ?? 7897)"
+        let sp = config.syncPaths ?? SyncPaths()
+        syncFields["skillsSrc"]?.stringValue = sp.skillsSrc
+        syncFields["skillsDest"]?.stringValue = sp.skillsDest
+        syncFields["modelsSrc"]?.stringValue = sp.modelsSrc
+        syncFields["modelsDest"]?.stringValue = sp.modelsDest
+        syncFields["agentsSrc"]?.stringValue = sp.agentsSrc
+        syncFields["agentsDest"]?.stringValue = sp.agentsDest
+        syncMirrorCheck?.state = sp.mirror ? .on : .off
+
         compressionCheck?.state = (s.map { compressionEnabled($0.sshHost) } ?? false) ? .on : .off
         setupView.string = s.map { serverSetupText($0) } ?? "（先添加一台服务器）"
         refreshLog()
@@ -1500,15 +1623,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func runAgentsSync(_ label: String, _ args: String) {
-        guard let s = current else { return }
-        touch(s, label)
-        run(label, "cd \(ROOT) && ./scripts/sync-to-server.sh \(args) --host '\(s.probeHost)'", timeout: 90)
+    func quoteShell(_ v: String) -> String {
+        "'" + v.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    @objc func onSyncAgents() { runAgentsSync("同步 AGENTS.md", "--agents") }
+    func persistSyncPaths() -> SyncPaths {
+        var sp = config.syncPaths ?? SyncPaths()
+        if let v = syncFields["skillsSrc"]?.stringValue, !v.isEmpty { sp.skillsSrc = v }
+        if let v = syncFields["skillsDest"]?.stringValue, !v.isEmpty { sp.skillsDest = v }
+        if let v = syncFields["modelsSrc"]?.stringValue, !v.isEmpty { sp.modelsSrc = v }
+        if let v = syncFields["modelsDest"]?.stringValue, !v.isEmpty { sp.modelsDest = v }
+        if let v = syncFields["agentsSrc"]?.stringValue, !v.isEmpty { sp.agentsSrc = v }
+        if let v = syncFields["agentsDest"]?.stringValue, !v.isEmpty { sp.agentsDest = v }
+        sp.mirror = (syncMirrorCheck?.state == .on)
+        config.syncPaths = sp
+        saveConfig(config)
+        return sp
+    }
 
-    @objc func onPullAgents() { runAgentsSync("拉取 AGENTS.md", "--agents-pull") }
+    @objc func onSyncSkills() {
+        guard let s = current else { return }
+        let sp = persistSyncPaths()
+        var args = "--skills --host \(quoteShell(s.probeHost)) --skills-src \(quoteShell(sp.skillsSrc)) --skills-dest \(quoteShell(sp.skillsDest))"
+        if !sp.mirror { args += " --no-mirror" }
+        touch(s, "同步 Skills")
+        run("同步 Skills", "cd \(ROOT) && ./scripts/sync-to-server.sh \(args)", timeout: 180)
+    }
+
+    @objc func onSyncModels() {
+        guard let s = current else { return }
+        let sp = persistSyncPaths()
+        let args = "--models --host \(quoteShell(s.probeHost)) --models-src \(quoteShell(sp.modelsSrc)) --models-dest \(quoteShell(sp.modelsDest))"
+        touch(s, "同步模型")
+        run("同步模型", "cd \(ROOT) && ./scripts/sync-to-server.sh \(args)", timeout: 180)
+    }
+
+    @objc func onSyncAgents() {
+        guard let s = current else { return }
+        let sp = persistSyncPaths()
+        let args = "--agents --host \(quoteShell(s.probeHost)) --agents-src \(quoteShell(sp.agentsSrc)) --agents-dest \(quoteShell(sp.agentsDest))"
+        touch(s, "同步 AGENTS.md")
+        run("同步 AGENTS.md", "cd \(ROOT) && ./scripts/sync-to-server.sh \(args)", timeout: 90)
+    }
+
+    @objc func onPullAgents() {
+        guard let s = current else { return }
+        let sp = persistSyncPaths()
+        let args = "--agents-pull --host \(quoteShell(s.probeHost)) --agents-src \(quoteShell(sp.agentsSrc)) --agents-dest \(quoteShell(sp.agentsDest))"
+        touch(s, "拉取 AGENTS.md")
+        run("拉取 AGENTS.md", "cd \(ROOT) && ./scripts/sync-to-server.sh \(args)", timeout: 90)
+    }
 
     @objc func onForceSyncAgents() {
         guard let s = current else { return }
@@ -1518,8 +1682,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         a.informativeText = "会先备份服务器上的旧文件。注意：服务器版本的机器专属内容（如 --catalog 参数）会被覆盖。"
         a.addButton(withTitle: "强制覆盖"); a.addButton(withTitle: "取消")
         guard a.runModal() == .alertFirstButtonReturn else { return }
+        let sp = persistSyncPaths()
+        var args = "--agents --force --host \(quoteShell(s.probeHost)) --agents-src \(quoteShell(sp.agentsSrc)) --agents-dest \(quoteShell(sp.agentsDest))"
+        args += ""
         touch(s, "强制同步 AGENTS.md")
-        run("强制同步 AGENTS.md", "cd \(ROOT) && ./scripts/sync-to-server.sh --agents --force --host '\(s.probeHost)'", timeout: 90)
+        run("强制同步 AGENTS.md", "cd \(ROOT) && ./scripts/sync-to-server.sh \(args)", timeout: 90)
     }
 
     func buildMoreMenu() {
@@ -1531,10 +1698,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             ("查看连接历史", #selector(onOpenHistory)),
             ("清空连接历史", #selector(onClearHistory)),
             ("", nil),
-            ("同步 skill/模型", #selector(onSyncToServer)),
-            ("同步 AGENTS.md → 服务器", #selector(onSyncAgents)),
-            ("从服务器拉取 AGENTS.md", #selector(onPullAgents)),
-            ("强制覆盖服务器 AGENTS.md", #selector(onForceSyncAgents)),
             ("重启远端 app-server", #selector(onRestartRemoteCodex)),
             ("重启本机 app-server", #selector(onRestartLocalAppServer)),
             ("检查服务器依赖", #selector(onCheckServerDeps)),
