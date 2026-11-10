@@ -434,6 +434,7 @@ enum Theme {
 // MARK: - 自适应外观组件（切换深浅色时自动重设 CALayer 颜色）
 class AdaptiveView: NSView {
     var fillColor: NSColor = .clear { didSet { applyColors() } }
+    var onAppearanceChange: (() -> Void)?
     var strokeColor: NSColor = .clear { didSet { applyColors() } }
     var radius: CGFloat = 0 { didSet { layer?.cornerRadius = radius } }
 
@@ -450,6 +451,7 @@ class AdaptiveView: NSView {
     }
 
     func applyColors() {
+        defer { onAppearanceChange?() }
         guard let layer = layer else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
             layer.backgroundColor = self.fillColor.cgColor
@@ -782,6 +784,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let content = AdaptiveView()
         content.fillColor = Theme.windowBG
         content.applyColors()
+        // 外观切换时统一刷新所有可编辑输入框与文本视图的文字颜色
+        // （嵌套在 layer-backed 视图里的字段经常保留旧外观解析出的颜色，导致白底白字）
+        content.onAppearanceChange = { [weak content] in
+            guard let root = content else { return }
+            let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            let color = dark ? NSColor.white : NSColor.black
+            func walk(_ v: NSView) {
+                if let tf = v as? NSTextField, tf.isEditable {
+                    tf.textColor = color
+                    tf.needsDisplay = true
+                }
+                if let tv = v as? NSTextView {
+                    tv.textColor = color
+                    tv.needsDisplay = true
+                }
+                v.subviews.forEach(walk)
+            }
+            walk(root)
+        }
         window.contentView = content
         window.contentMinSize = NSSize(width: 900, height: 600)
         window.setContentSize(NSSize(width: 1000, height: 700))
@@ -1152,9 +1173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             NSLayoutConstraint.activate([
                 box.heightAnchor.constraint(equalToConstant: 26),
                 f.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8),
-                f.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -8),
+                f.widthAnchor.constraint(equalTo: box.widthAnchor, constant: -16),
+                f.heightAnchor.constraint(equalToConstant: 18),
                 f.centerYAnchor.constraint(equalTo: box.centerYAnchor),
             ])
+            box.onAppearanceChange = { [weak f] in
+                f?.textColor = .labelColor
+                f?.needsDisplay = true
+            }
             return box
         }
 
@@ -1271,6 +1297,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             cf.trailingAnchor.constraint(lessThanOrEqualTo: cfBox.trailingAnchor, constant: -8),
             cf.centerYAnchor.constraint(equalTo: cfBox.centerYAnchor),
         ])
+        cfBox.onAppearanceChange = { [weak cf] in
+            cf?.textColor = .labelColor
+            cf?.needsDisplay = true
+        }
         ctxRow.addArrangedSubview(ctxLabel)
         ctxRow.addArrangedSubview(cfBox)
         ctxRow.addArrangedSubview(pill("读取", #selector(onReadRemoteContext), height: 26))
@@ -1305,6 +1335,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
             cwf.trailingAnchor.constraint(lessThanOrEqualTo: cwfBox.trailingAnchor, constant: -8),
             cwf.centerYAnchor.constraint(equalTo: cwfBox.centerYAnchor),
         ])
+        cwfBox.onAppearanceChange = { [weak cwf] in
+            cwf?.textColor = .labelColor
+            cwf?.needsDisplay = true
+        }
         let asyncCheck = NSButton(checkboxWithTitle: "启用异步压缩 [features.async_compaction]",
                                   target: nil, action: nil)
         asyncCheck.state = .off
