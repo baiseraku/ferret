@@ -595,6 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var compressionCheck: NSButton?
     var syncFields: [String: NSTextField] = [:]
     var syncMirrorCheck: NSButton?
+    var contextField: NSTextField?
     var statusTimer: Timer?
     var fields: [String: NSTextField] = [:]
     var busy = false
@@ -1203,6 +1204,56 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             syncStack.addArrangedSubview(card)
             card.widthAnchor.constraint(equalTo: syncStack.widthAnchor).isActive = true
         }
+
+        // 远端 codex 上下文（model_auto_compact_token_limit）
+        let ctxCard = CardView(fill: Theme.windowBG, radius: 8)
+        ctxCard.translatesAutoresizingMaskIntoConstraints = false
+        let ctxStack = NSStackView()
+        ctxStack.orientation = .vertical
+        ctxStack.alignment = .leading
+        ctxStack.spacing = 6
+        ctxStack.translatesAutoresizingMaskIntoConstraints = false
+        ctxCard.addSubview(ctxStack)
+        NSLayoutConstraint.activate([
+            ctxStack.topAnchor.constraint(equalTo: ctxCard.topAnchor, constant: 10),
+            ctxStack.leadingAnchor.constraint(equalTo: ctxCard.leadingAnchor, constant: 12),
+            ctxStack.trailingAnchor.constraint(equalTo: ctxCard.trailingAnchor, constant: -12),
+            ctxStack.bottomAnchor.constraint(equalTo: ctxCard.bottomAnchor, constant: -10),
+        ])
+        let ctxTitle = NSTextField(labelWithString: "远端 codex 上下文")
+        ctxTitle.font = .systemFont(ofSize: 13, weight: .semibold)
+        ctxStack.addArrangedSubview(ctxTitle)
+        let ctxHint = NSTextField(labelWithString: "服务器 ~/.codex/config.toml 的 model_auto_compact_token_limit；留空表示不设置")
+        ctxHint.font = .systemFont(ofSize: 11)
+        ctxHint.textColor = .secondaryLabelColor
+        ctxStack.addArrangedSubview(ctxHint)
+        let ctxRow = NSStackView(); ctxRow.orientation = .horizontal; ctxRow.spacing = 8
+        let ctxLabel = NSTextField(labelWithString: "自动压缩阈值")
+        ctxLabel.font = .systemFont(ofSize: 11)
+        ctxLabel.textColor = .secondaryLabelColor
+        ctxLabel.translatesAutoresizingMaskIntoConstraints = false
+        ctxLabel.widthAnchor.constraint(equalToConstant: 88).isActive = true
+        let cf = NSTextField(string: "")
+        cf.placeholderString = "例如 200000"
+        cf.font = .systemFont(ofSize: 12)
+        cf.isBezeled = false
+        cf.drawsBackground = true
+        cf.backgroundColor = Theme.fieldBG
+        cf.wantsLayer = true
+        cf.layer?.cornerRadius = 6
+        cf.focusRingType = .none
+        cf.translatesAutoresizingMaskIntoConstraints = false
+        cf.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        cf.widthAnchor.constraint(equalToConstant: 140).isActive = true
+        contextField = cf
+        ctxRow.addArrangedSubview(ctxLabel)
+        ctxRow.addArrangedSubview(cf)
+        ctxRow.addArrangedSubview(pill("读取", #selector(onReadRemoteContext), height: 26))
+        ctxRow.addArrangedSubview(pill("应用", #selector(onApplyRemoteContext), primary: true, height: 26))
+        ctxRow.addArrangedSubview(pill("恢复默认", #selector(onResetRemoteContext), height: 26))
+        ctxStack.addArrangedSubview(ctxRow)
+        syncStack.addArrangedSubview(ctxCard)
+        ctxCard.widthAnchor.constraint(equalTo: syncStack.widthAnchor).isActive = true
         let depRow = NSStackView(views: [pill("检查服务器依赖", #selector(onCheckServerDeps), height: 26)])
         depRow.orientation = .horizontal
         syncStack.addArrangedSubview(depRow)
@@ -1249,6 +1300,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func onSegmentChanged() {
         let idx = max(0, min(segmented.selectedSegment, tabBoxes.count - 1))
         for (i, b) in tabBoxes.enumerated() { b.isHidden = (i != idx) }
+        if idx == 3, (contextField?.stringValue.isEmpty ?? false), !busy {
+            onReadRemoteContext()
+        }
     }
 
     func reloadServerUI() {
@@ -1653,6 +1707,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         config.syncPaths = sp
         saveConfig(config)
         return sp
+    }
+
+    func runContextCommand(_ label: String, _ flag: String) {
+        guard let s = current else { return }
+        touch(s, label)
+        run(label, "cd \(ROOT) && ./scripts/set-remote-context.sh \(flag) --host \(quoteShell(s.probeHost))", timeout: 60)
+    }
+
+    @objc func onReadRemoteContext() { runContextCommand("读取远端上下文", "--get") }
+
+    @objc func onApplyRemoteContext() {
+        let raw = (contextField?.stringValue ?? "").trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else {
+            NSApp.activate(ignoringOtherApps: true)
+            let a = NSAlert(); a.messageText = "请输入上下文大小"; a.informativeText = "例如 200000；留空请用「恢复默认」。"
+            a.addButton(withTitle: "好"); a.runModal(); return
+        }
+        guard Int(raw) != nil else {
+            NSApp.activate(ignoringOtherApps: true)
+            let a = NSAlert(); a.messageText = "必须是整数"; a.informativeText = "例如 200000"
+            a.addButton(withTitle: "好"); a.runModal(); return
+        }
+        runContextCommand("应用远端上下文", "--set \(raw)")
+    }
+
+    @objc func onResetRemoteContext() {
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert(); a.messageText = "恢复远端默认上下文阈值？"
+        a.informativeText = "会从服务器 ~/.codex/config.toml 删除 model_auto_compact_token_limit（修改前自动备份）。"
+        a.addButton(withTitle: "恢复"); a.addButton(withTitle: "取消")
+        guard a.runModal() == .alertFirstButtonReturn else { return }
+        runContextCommand("恢复远端上下文默认值", "--reset")
     }
 
     @objc func onSyncSkills() {
