@@ -596,6 +596,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
     var syncFields: [String: NSTextField] = [:]
     var syncMirrorCheck: NSButton?
     var contextField: NSTextField?
+    var contextWindowField: NSTextField?
+    var asyncCompactionCheck: NSButton?
     var statusTimer: Timer?
     var fields: [String: NSTextField] = [:]
     var busy = false
@@ -1275,6 +1277,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         ctxRow.addArrangedSubview(pill("应用", #selector(onApplyRemoteContext), primary: true, height: 26))
         ctxRow.addArrangedSubview(pill("恢复默认", #selector(onResetRemoteContext), height: 26))
         ctxStack.addArrangedSubview(ctxRow)
+
+        let ctxRow2 = NSStackView(); ctxRow2.orientation = .horizontal; ctxRow2.spacing = 8
+        let ctxLabel2 = NSTextField(labelWithString: "上下文窗口")
+        ctxLabel2.font = .systemFont(ofSize: 11)
+        ctxLabel2.textColor = .secondaryLabelColor
+        ctxLabel2.translatesAutoresizingMaskIntoConstraints = false
+        ctxLabel2.widthAnchor.constraint(equalToConstant: 88).isActive = true
+        let cwf = NSTextField(string: "")
+        cwf.placeholderString = "例如 400000"
+        cwf.font = .systemFont(ofSize: 12)
+        cwf.isBezeled = false
+        cwf.drawsBackground = false
+        cwf.focusRingType = .none
+        cwf.translatesAutoresizingMaskIntoConstraints = false
+        contextWindowField = cwf
+        let cwfBox = AdaptiveView()
+        cwfBox.fillColor = Theme.fieldBG
+        cwfBox.radius = 6
+        cwfBox.applyColors()
+        cwfBox.translatesAutoresizingMaskIntoConstraints = false
+        cwfBox.addSubview(cwf)
+        NSLayoutConstraint.activate([
+            cwfBox.heightAnchor.constraint(equalToConstant: 26),
+            cwfBox.widthAnchor.constraint(equalToConstant: 150),
+            cwf.leadingAnchor.constraint(equalTo: cwfBox.leadingAnchor, constant: 8),
+            cwf.trailingAnchor.constraint(lessThanOrEqualTo: cwfBox.trailingAnchor, constant: -8),
+            cwf.centerYAnchor.constraint(equalTo: cwfBox.centerYAnchor),
+        ])
+        let asyncCheck = NSButton(checkboxWithTitle: "启用异步压缩 [features.async_compaction]",
+                                  target: nil, action: nil)
+        asyncCheck.state = .off
+        asyncCheck.font = .systemFont(ofSize: 11)
+        asyncCompactionCheck = asyncCheck
+        ctxRow2.addArrangedSubview(ctxLabel2)
+        ctxRow2.addArrangedSubview(cwfBox)
+        ctxRow2.addArrangedSubview(asyncCheck)
+        ctxStack.addArrangedSubview(ctxRow2)
         syncStack.addArrangedSubview(ctxCard)
         ctxCard.widthAnchor.constraint(equalTo: syncStack.widthAnchor).isActive = true
         let depRow = NSStackView(views: [pill("检查服务器依赖", #selector(onCheckServerDeps), height: 26)])
@@ -1770,36 +1809,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         let cmd = "cd \(ROOT) && ./scripts/set-remote-context.sh --get --host \(quoteShell(s.probeHost))"
         DispatchQueue.global().async {
             let (_, out) = shell(cmd, timeout: 60)
-            let value = out.split(separator: "\n")
-                .map { $0.trimmingCharacters(in: .whitespaces) }
-                .last(where: { !$0.isEmpty }) ?? ""
+            var limit = "", window = "", asyncOn: Bool? = nil
+            if let line = out.split(separator: "\n").last(where: { $0.hasPrefix("{") }),
+               let data = String(line).data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                limit = obj["model_auto_compact_token_limit"] as? String ?? ""
+                window = obj["model_context_window"] as? String ?? ""
+                let a = obj["async_compaction"] as? String ?? "unset"
+                asyncOn = (a == "true") ? true : (a == "false" ? false : nil)
+            }
             DispatchQueue.main.async {
                 self.busy = false
-                if value.range(of: #"^\d+$"#, options: .regularExpression) != nil {
-                    self.contextField?.stringValue = value
-                    self.appendFeedback("远端上下文阈值: \(value)", title: "读取远端上下文")
-                } else {
-                    self.contextField?.stringValue = ""
-                    self.appendFeedback("远端未设置 model_auto_compact_token_limit（unset）", title: "读取远端上下文")
+                func put(_ f: NSTextField?, _ v: String) {
+                    f?.stringValue = (v.range(of: #"^\d+$"#, options: .regularExpression) != nil) ? v : ""
                 }
+                put(self.contextField, limit)
+                put(self.contextWindowField, window)
+                self.asyncCompactionCheck?.state = (asyncOn == true) ? .on : .off
+                self.appendFeedback("自动压缩阈值: \(limit)，上下文窗口: \(window)，异步压缩: \(asyncOn.map { $0 ? "on" : "off" } ?? "unset")",
+                                    title: "读取远端上下文")
                 self.actionLabel.stringValue = "读取完成"
             }
         }
     }
 
     @objc func onApplyRemoteContext() {
-        let raw = (contextField?.stringValue ?? "").trimmingCharacters(in: .whitespaces)
-        guard !raw.isEmpty else {
+        guard let s = current else { return }
+        let limit = (contextField?.stringValue ?? "").trimmingCharacters(in: .whitespaces)
+        let window = (contextWindowField?.stringValue ?? "").trimmingCharacters(in: .whitespaces)
+        func invalid(_ msg: String) {
             NSApp.activate(ignoringOtherApps: true)
-            let a = NSAlert(); a.messageText = "请输入上下文大小"; a.informativeText = "例如 200000；留空请用「恢复默认」。"
-            a.addButton(withTitle: "好"); a.runModal(); return
+            let a = NSAlert(); a.messageText = msg; a.informativeText = "留空表示该项保持不动；要清除请用「恢复默认」。"
+            a.addButton(withTitle: "好"); a.runModal()
         }
-        guard Int(raw) != nil else {
-            NSApp.activate(ignoringOtherApps: true)
-            let a = NSAlert(); a.messageText = "必须是整数"; a.informativeText = "例如 200000"
-            a.addButton(withTitle: "好"); a.runModal(); return
+        if !limit.isEmpty, Int(limit) == nil { invalid("自动压缩阈值必须是整数"); return }
+        if !window.isEmpty, Int(window) == nil { invalid("上下文窗口必须是整数"); return }
+        if limit.isEmpty && window.isEmpty && asyncCompactionCheck?.state != .on {
+            // 仍然允许：只关闭异步压缩
         }
-        runContextCommand("应用远端上下文", "--set \(raw)")
+        var args = "--apply"
+        if !limit.isEmpty { args += " --limit \(limit)" }
+        if !window.isEmpty { args += " --window \(window)" }
+        args += " --async \((asyncCompactionCheck?.state == .on) ? "1" : "0")"
+        touch(s, "应用远端上下文")
+        run("应用远端上下文",
+            "cd \(ROOT) && ./scripts/set-remote-context.sh \(args) --host \(quoteShell(s.probeHost))",
+            timeout: 60)
     }
 
     @objc func onResetRemoteContext() {
@@ -1809,6 +1864,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         a.addButton(withTitle: "恢复"); a.addButton(withTitle: "取消")
         guard a.runModal() == .alertFirstButtonReturn else { return }
         contextField?.stringValue = ""
+        contextWindowField?.stringValue = ""
+        asyncCompactionCheck?.state = .off
         runContextCommand("恢复远端上下文默认值", "--reset")
     }
 

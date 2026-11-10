@@ -1,18 +1,27 @@
 #!/bin/bash
-# 读取/设置远端 codex 的 model_auto_compact_token_limit
-# 用法: set-remote-context.sh [--get] [--set N] [--reset] [--host <别名>]
+# 读取/设置远端 codex 的上下文相关配置：
+#   model_auto_compact_token_limit（顶层整数）
+#   model_context_window（顶层整数）
+#   [features.async_compaction] enabled（布尔）
+# 用法:
+#   set-remote-context.sh --get [--host H]
+#   set-remote-context.sh --apply [--limit N] [--window N] [--async 0|1] [--host H]
+#   set-remote-context.sh --reset [--host H]
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 for _f in "$ROOT/scripts/local.env" "$HOME/.config/ferret/local.env"; do
   [ -f "$_f" ] && . "$_f" && break
 done
 HOST="${CODEX_PROBE_HOST:-my-server}"
-MODE="get"; VALUE=""
+MODE="get"; LIMIT=""; WINDOW=""; ASYNC=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --get) MODE="get" ;;
-    --set) MODE="set"; VALUE="${2:?}"; shift ;;
+    --apply) MODE="apply" ;;
     --reset) MODE="reset" ;;
+    --limit) LIMIT="${2:?}"; shift ;;
+    --window) WINDOW="${2:?}"; shift ;;
+    --async) ASYNC="${2:?}"; shift ;;
     --host) HOST="${2:?}"; shift ;;
     *) echo "未知参数: $1" >&2; exit 2 ;;
   esac
@@ -20,49 +29,94 @@ while [ $# -gt 0 ]; do
 done
 
 /usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 \
-  -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$HOST" "MODE='$MODE' VALUE='$VALUE' python3 -" <<'PY'
-import os, re, shutil, sys, time
+  -o ClearAllForwardings=yes -o ControlMaster=no -o ControlPath=none "$HOST" \
+  "MODE='$MODE' LIMIT='$LIMIT' WINDOW='$WINDOW' ASYNC='$ASYNC' python3 -" <<'PY'
+import json, os, re, shutil, sys, time
+
 path = os.path.expanduser('~/.codex/config.toml')
-key = 'model_auto_compact_token_limit'
 mode = os.environ.get('MODE', 'get')
-value = os.environ.get('VALUE', '')
+limit = os.environ.get('LIMIT', '').strip()
+window = os.environ.get('WINDOW', '').strip()
+async_v = os.environ.get('ASYNC', '').strip()
 
 try:
     text = open(path).read()
 except FileNotFoundError:
-    if mode == 'get':
-        print('unset'); sys.exit(0)
     text = ''
 
-m = re.search(r'(?m)^%s\s*=\s*(.*)$' % key, text)
-current = m.group(1).strip() if m else 'unset'
+def find_top(key):
+    m = re.search(r'(?m)^%s\s*=\s*(.*)$' % re.escape(key), text)
+    return m.group(1).strip() if m else None
 
 if mode == 'get':
-    print(current); sys.exit(0)
+    # async compaction 的 enabled
+    sec = re.search(r'(?ms)^\[features\.async_compaction\]\s*\n(.*?)(?=^\[|\Z)', text)
+    enabled = None
+    if sec:
+        m = re.search(r'(?m)^\s*enabled\s*=\s*(true|false)', sec.group(1))
+        enabled = m.group(1) if m else None
+    print(json.dumps({
+        'model_auto_compact_token_limit': find_top('model_auto_compact_token_limit') or 'unset',
+        'model_context_window': find_top('model_context_window') or 'unset',
+        'async_compaction': enabled if enabled else 'unset',
+    }))
+    sys.exit(0)
 
-shutil.copy2(path, path + '.bak-context-' + time.strftime('%Y%m%d-%H%M%S'))
+shutil.copy2(path, path + '.bak-context-' + time.strftime('%Y%m%d-%H%M%S')) if os.path.exists(path) else None
+
+def set_top(key, value):
+    global text
+    if value == '':
+        return
+    line = '%s = %s' % (key, value)
+    if re.search(r'(?m)^%s\s*=' % re.escape(key), text):
+        text = re.sub(r'(?m)^%s\s*=.*$' % re.escape(key), line, text)
+    else:
+        # 插到第一个 [table] 之前，保持顶层键
+        m = re.search(r'(?m)^\[', text)
+        if m:
+            text = text[:m.start()] + line + '\n' + text[m.start():]
+        else:
+            text = text.rstrip('\n') + '\n' + line + '\n'
+
+def set_async(value):
+    global text
+    if value not in ('0', '1'):
+        return
+    want = 'true' if value == '1' else 'false'
+    sec = re.search(r'(?ms)^\[features\.async_compaction\]\s*\n(.*?)(?=^\[|\Z)', text)
+    if sec:
+        body = sec.group(1)
+        if re.search(r'(?m)^\s*enabled\s*=', body):
+            body = re.sub(r'(?m)^\s*enabled\s*=.*$', 'enabled = ' + want, body)
+        else:
+            body = body.rstrip('\n') + '\n' + 'enabled = ' + want + '\n'
+        text = text[:sec.start(1)] + body + text[sec.end(1):]
+    else:
+        text = text.rstrip('\n') + '\n\n[features.async_compaction]\nenabled = ' + want + '\n'
 
 if mode == 'reset':
-    text = re.sub(r'(?m)^%s\s*=.*\n?' % key, '', text)
-    open(path, 'w').write(text)
-    print('unset'); sys.exit(0)
-
-# mode == set
-try:
-    n = int(value)
-except ValueError:
-    print('invalid: 必须是整数', file=sys.stderr); sys.exit(2)
-if n < 1000:
-    print('invalid: 至少 1000', file=sys.stderr); sys.exit(2)
-
-line = '%s = %d' % (key, n)
-if m:
-    text = re.sub(r'(?m)^%s\s*=.*$' % key, line, text)
+    text = re.sub(r'(?m)^model_auto_compact_token_limit\s*=.*\n?', '', text)
+    text = re.sub(r'(?m)^model_context_window\s*=.*\n?', '', text)
+    text = re.sub(r'(?ms)^\[features\.async_compaction\]\s*\n(?:[^\[].*\n?)*', '', text)
 else:
-    # 插到文件最前面的普通键区域
-    if text and not text.endswith('\n'):
-        text += '\n'
-    text = line + '\n' + text
+    if limit:
+        try:
+            n = int(limit)
+            if n < 1000: raise ValueError
+        except ValueError:
+            print('invalid limit', file=sys.stderr); sys.exit(2)
+        set_top('model_auto_compact_token_limit', str(n))
+    if window:
+        try:
+            n = int(window)
+            if n < 1000: raise ValueError
+        except ValueError:
+            print('invalid window', file=sys.stderr); sys.exit(2)
+        set_top('model_context_window', str(n))
+    set_async(async_v)
+
+text = re.sub(r'\n{3,}', '\n\n', text)
 open(path, 'w').write(text)
-print('%s = %d' % (key, n))
+print('applied')
 PY
