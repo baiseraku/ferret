@@ -569,7 +569,7 @@ final class ServerRowView: NSView {
     override func mouseDown(with event: NSEvent) { onSelect?() }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTextFieldDelegate {
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable],
                           backing: .buffered, defer: false)
@@ -643,7 +643,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        autoSaveSyncPaths()
+    }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        autoSaveSyncPaths()
         sender.orderOut(nil)   // 只隐藏窗口，进程继续跑（常驻隧道不受影响）
         return false
     }
@@ -1125,20 +1130,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         syncBottom.priority = .defaultHigh
         syncBottom.isActive = true
 
-        func syncField(_ key: String, _ placeholder: String) -> NSTextField {
+        func syncField(_ key: String, _ placeholder: String) -> NSView {
             let f = NSTextField(string: "")
             f.placeholderString = placeholder
             f.font = .systemFont(ofSize: 12)
             f.isBezeled = false
-            f.drawsBackground = true
-            f.backgroundColor = Theme.fieldBG
-            f.wantsLayer = true
-            f.layer?.cornerRadius = 6
+            f.drawsBackground = false
             f.focusRingType = .none
             f.translatesAutoresizingMaskIntoConstraints = false
-            f.heightAnchor.constraint(equalToConstant: 26).isActive = true
+            f.delegate = self
             syncFields[key] = f
-            return f
+
+            let box = AdaptiveView()
+            box.fillColor = Theme.fieldBG
+            box.radius = 6
+            box.applyColors()
+            box.translatesAutoresizingMaskIntoConstraints = false
+            box.addSubview(f)
+            NSLayoutConstraint.activate([
+                box.heightAnchor.constraint(equalToConstant: 26),
+                f.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 8),
+                f.trailingAnchor.constraint(lessThanOrEqualTo: box.trailingAnchor, constant: -8),
+                f.centerYAnchor.constraint(equalTo: box.centerYAnchor),
+            ])
+            return box
         }
 
         func syncCard(_ title: String, _ srcKey: String, _ destKey: String, buttons: [NSView]) -> NSView {
@@ -1185,7 +1200,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let skillsMirror = NSButton(checkboxWithTitle: "镜像：删除服务器多余技能",
-                                    target: nil, action: nil)
+                                    target: self, action: #selector(onToggleSyncMirror))
         skillsMirror.font = .systemFont(ofSize: 11)
         syncMirrorCheck = skillsMirror
 
@@ -1237,17 +1252,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         cf.placeholderString = "例如 200000"
         cf.font = .systemFont(ofSize: 12)
         cf.isBezeled = false
-        cf.drawsBackground = true
-        cf.backgroundColor = Theme.fieldBG
-        cf.wantsLayer = true
-        cf.layer?.cornerRadius = 6
+        cf.drawsBackground = false
         cf.focusRingType = .none
         cf.translatesAutoresizingMaskIntoConstraints = false
-        cf.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        cf.widthAnchor.constraint(equalToConstant: 140).isActive = true
         contextField = cf
+        let cfBox = AdaptiveView()
+        cfBox.fillColor = Theme.fieldBG
+        cfBox.radius = 6
+        cfBox.applyColors()
+        cfBox.translatesAutoresizingMaskIntoConstraints = false
+        cfBox.addSubview(cf)
+        NSLayoutConstraint.activate([
+            cfBox.heightAnchor.constraint(equalToConstant: 26),
+            cfBox.widthAnchor.constraint(equalToConstant: 150),
+            cf.leadingAnchor.constraint(equalTo: cfBox.leadingAnchor, constant: 8),
+            cf.trailingAnchor.constraint(lessThanOrEqualTo: cfBox.trailingAnchor, constant: -8),
+            cf.centerYAnchor.constraint(equalTo: cfBox.centerYAnchor),
+        ])
         ctxRow.addArrangedSubview(ctxLabel)
-        ctxRow.addArrangedSubview(cf)
+        ctxRow.addArrangedSubview(cfBox)
         ctxRow.addArrangedSubview(pill("读取", #selector(onReadRemoteContext), height: 26))
         ctxRow.addArrangedSubview(pill("应用", #selector(onApplyRemoteContext), primary: true, height: 26))
         ctxRow.addArrangedSubview(pill("恢复默认", #selector(onResetRemoteContext), height: 26))
@@ -1298,6 +1321,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func onSegmentChanged() {
+        if segmented.selectedSegment != 3 { autoSaveSyncPaths() }
         let idx = max(0, min(segmented.selectedSegment, tabBoxes.count - 1))
         for (i, b) in tabBoxes.enumerated() { b.isHidden = (i != idx) }
         if idx == 3, (contextField?.stringValue.isEmpty ?? false), !busy {
@@ -1695,6 +1719,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         "'" + v.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
+    func autoSaveSyncPaths() {
+        var sp = config.syncPaths ?? SyncPaths()
+        if let v = syncFields["skillsSrc"]?.stringValue, !v.isEmpty { sp.skillsSrc = v }
+        if let v = syncFields["skillsDest"]?.stringValue, !v.isEmpty { sp.skillsDest = v }
+        if let v = syncFields["modelsSrc"]?.stringValue, !v.isEmpty { sp.modelsSrc = v }
+        if let v = syncFields["modelsDest"]?.stringValue, !v.isEmpty { sp.modelsDest = v }
+        if let v = syncFields["agentsSrc"]?.stringValue, !v.isEmpty { sp.agentsSrc = v }
+        if let v = syncFields["agentsDest"]?.stringValue, !v.isEmpty { sp.agentsDest = v }
+        sp.mirror = (syncMirrorCheck?.state == .on)
+        config.syncPaths = sp
+        saveConfig(config)
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let f = obj.object as? NSTextField, syncFields.values.contains(where: { $0 === f }) else { return }
+        autoSaveSyncPaths()
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        controlTextDidChange(obj)
+    }
+
+    @objc func onToggleSyncMirror() { autoSaveSyncPaths() }
+
     func persistSyncPaths() -> SyncPaths {
         var sp = config.syncPaths ?? SyncPaths()
         if let v = syncFields["skillsSrc"]?.stringValue, !v.isEmpty { sp.skillsSrc = v }
@@ -1715,7 +1763,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         run(label, "cd \(ROOT) && ./scripts/set-remote-context.sh \(flag) --host \(quoteShell(s.probeHost))", timeout: 60)
     }
 
-    @objc func onReadRemoteContext() { runContextCommand("读取远端上下文", "--get") }
+    @objc func onReadRemoteContext() {
+        guard let s = current, !busy else { return }
+        busy = true
+        actionLabel.stringValue = "读取远端上下文…"
+        let cmd = "cd \(ROOT) && ./scripts/set-remote-context.sh --get --host \(quoteShell(s.probeHost))"
+        DispatchQueue.global().async {
+            let (_, out) = shell(cmd, timeout: 60)
+            let value = out.split(separator: "\n")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .last(where: { !$0.isEmpty }) ?? ""
+            DispatchQueue.main.async {
+                self.busy = false
+                if value.range(of: #"^\d+$"#, options: .regularExpression) != nil {
+                    self.contextField?.stringValue = value
+                    self.appendFeedback("远端上下文阈值: \(value)", title: "读取远端上下文")
+                } else {
+                    self.contextField?.stringValue = ""
+                    self.appendFeedback("远端未设置 model_auto_compact_token_limit（unset）", title: "读取远端上下文")
+                }
+                self.actionLabel.stringValue = "读取完成"
+            }
+        }
+    }
 
     @objc func onApplyRemoteContext() {
         let raw = (contextField?.stringValue ?? "").trimmingCharacters(in: .whitespaces)
@@ -1738,6 +1808,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         a.informativeText = "会从服务器 ~/.codex/config.toml 删除 model_auto_compact_token_limit（修改前自动备份）。"
         a.addButton(withTitle: "恢复"); a.addButton(withTitle: "取消")
         guard a.runModal() == .alertFirstButtonReturn else { return }
+        contextField?.stringValue = ""
         runContextCommand("恢复远端上下文默认值", "--reset")
     }
 
