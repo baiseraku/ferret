@@ -914,7 +914,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
         // 操作按钮
         // 「更多」用和普通按钮一致的自绘胶囊，点开二级菜单
         let moreBtn = pill("更多 ▾", #selector(onMoreMenu(_:)))
-        moreBtn.widthAnchor.constraint(equalToConstant: 86).isActive = true
         buildMoreMenu()
 
         let actions = NSStackView(views: [
