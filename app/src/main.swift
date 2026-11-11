@@ -1199,27 +1199,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTe
                 stack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -12),
                 stack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -10),
             ])
+            let row = NSStackView(); row.orientation = .horizontal; row.spacing = 8
+            row.alignment = .centerY
             let t = NSTextField(labelWithString: title)
             t.font = .systemFont(ofSize: 13, weight: .semibold)
-            stack.addArrangedSubview(t)
+            t.translatesAutoresizingMaskIntoConstraints = false
+            t.widthAnchor.constraint(equalToConstant: 76).isActive = true
+            let src = syncField(srcKey, "本机路径")
+            let arrow = NSTextField(labelWithString: "→")
+            arrow.font = .systemFont(ofSize: 12, weight: .semibold)
+            arrow.textColor = Theme.accent
+            let dst = syncField(destKey, "服务器路径")
+            row.addArrangedSubview(t)
+            row.addArrangedSubview(src)
+            row.addArrangedSubview(arrow)
+            row.addArrangedSubview(dst)
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+            src.widthAnchor.constraint(equalTo: dst.widthAnchor).isActive = true
 
-            func pathRow(_ caption: String, _ key: String) -> NSStackView {
-                let row = NSStackView(); row.orientation = .horizontal; row.spacing = 8
-                let l = NSTextField(labelWithString: caption)
-                l.font = .systemFont(ofSize: 11); l.textColor = .secondaryLabelColor
-                l.translatesAutoresizingMaskIntoConstraints = false
-                l.widthAnchor.constraint(equalToConstant: 36).isActive = true
-                let f = syncField(key, "路径")
-                row.addArrangedSubview(l); row.addArrangedSubview(f)
-                f.widthAnchor.constraint(equalTo: row.widthAnchor, constant: -44).isActive = true
-                return row
-            }
-            let srcRow = pathRow("来源", srcKey)
-            stack.addArrangedSubview(srcRow)
-            srcRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
-            let destRow = pathRow("目标", destKey)
-            stack.addArrangedSubview(destRow)
-            destRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
             let br = NSStackView(views: buttons)
             br.orientation = .horizontal
             br.spacing = 8
