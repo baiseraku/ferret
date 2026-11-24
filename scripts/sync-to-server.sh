@@ -109,7 +109,7 @@ sync_skills() {
   n=$(printf '%s' "$keep" | tr ',' '\n' | grep -c .)
   tmp=$(mktemp)
   COPYFILE_DISABLE=1 tar czhf "$tmp" --no-mac-metadata --no-xattrs \
-      --exclude '.DS_Store' --exclude '.git' --exclude 'node_modules' --exclude '__pycache__' --exclude '._*' \
+      --exclude '.DS_Store' --exclude '.git' --exclude '.cache' --exclude 'node_modules' --exclude '__pycache__' --exclude '._*' \
       -C "$src" . 2>/dev/null || { rc=1; rm -f "$tmp"; return; }
   "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes "$ALIAS" \
     "mkdir -p '$dest' && tar --warning=no-unknown-keyword --overwrite -xzf - -C '$dest'" < "$tmp" \
@@ -127,7 +127,7 @@ removed = []
 if os.path.isdir(base):
     for n in sorted(os.listdir(base)):
         p = os.path.join(base, n)
-        if n == '.system' or not os.path.isdir(p) or os.path.islink(p):
+        if n in {'.system', '.cache'} or not os.path.isdir(p) or os.path.islink(p):
             continue
         if n not in keep:
             shutil.rmtree(p); removed.append(n)
@@ -142,24 +142,19 @@ PY
 # ---------- 模型目录 ----------
 sync_models() {
   echo "== 模型目录 =="
-  local src="$MODELS_SRC" dest; dest=$(expand_remote "$MODELS_DEST")
+  local src="$MODELS_SRC" dest command
+  dest=$(expand_remote "$MODELS_DEST")
   [ -f "$src" ] || { echo "  找不到来源文件: $src" >&2; rc=1; return; }
-  "$SCP" -q "${SSHOPT[@]}" "$src" "$ALIAS:$dest" || { echo "  上传失败" >&2; rc=1; return; }
-  "$SSH" "${SSHOPT[@]}" -o ClearAllForwardings=yes "$ALIAS" "DEST='$dest' python3 -" <<'PY' || rc=1
-import os, re, shutil, time
-dest = os.environ['DEST']
-cfg = os.path.expanduser('~/.codex/config.toml')
-if os.path.exists(cfg):
-    shutil.copy2(cfg, cfg + '.bak-sync-' + time.strftime('%Y%m%d-%H%M%S'))
-    text = open(cfg).read()
-    if re.search(r'(?m)^model_catalog_json\s*=', text):
-        text = re.sub(r'(?m)^model_catalog_json\s*=.*$', 'model_catalog_json = "%s"' % dest, text)
-    else:
-        text = 'model_catalog_json = "%s"\n' % dest + text
-    open(cfg, 'w').write(text)
+  command=$(python3 - "$ROOT/scripts/model_catalog.py" "$dest" <<'PY'
+from pathlib import Path
+import shlex
+import sys
+
+program = Path(sys.argv[1]).read_text(encoding="utf-8")
+print("python3 -c", shlex.quote(program), shlex.quote(sys.argv[2]))
 PY
-  local n; n=$(python3 -c "import json,sys;print(len(json.load(open('$src'))['models']))" 2>/dev/null || echo '?')
-  say "已上传 $n 个模型 → $MODELS_DEST"
+  ) || { rc=1; return; }
+  "$SSH" -T "${SSHOPT[@]}" -o ClearAllForwardings=yes -- "$ALIAS" "$command" < "$src" || rc=1
 }
 
 # ---------- AGENTS.md ----------

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 APP="$ROOT/build/Ferret.app"
 mkdir -p "$ROOT/build" "$APP/Contents/MacOS" "$APP/Contents/Resources"
-/usr/bin/swiftc -O "$ROOT/src/main.swift" -o "$APP/Contents/MacOS/Ferret" -framework Cocoa
+/usr/bin/swiftc -O "$ROOT"/src/*.swift -o "$APP/Contents/MacOS/Ferret" -framework Cocoa
 
 # 图标：没有 assets/AppIcon.icns 时先生成
 mkdir -p "$ROOT/assets"
@@ -24,8 +24,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIdentifier</key><string>local.ferret.app</string>
   <key>CFBundleExecutable</key><string>Ferret</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0.1</string>
+  <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>CFBundleIconFile</key><string>AppIcon</string>
